@@ -1,0 +1,117 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"github.com/yurizf/go-aws-msg-with-batching/batching"
+	"github.com/yurizf/go-aws-msg-with-batching/sns"
+	"log/slog"
+	"math/rand"
+	"os"
+	"strconv"
+)
+
+const allChars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890_-/+?!@#$%^&*()[]"
+
+func randString(minLen int, maxLen int) string {
+	// inclusive
+	n := rand.Intn(maxLen-minLen+1) + minLen
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = allChars[rand.Int63()%int64(len(allChars))]
+	}
+	return string(b)
+}
+
+var config = struct {
+	numberOfMessages   int
+	numberOfGoRoutines int
+	topic_arn          string
+}{1000, 10, ""}
+
+func main() {
+	if r := os.Getenv("TOTAL_MESSAGES"); r != "" {
+		config.numberOfMessages, _ = strconv.Atoi(r)
+	}
+
+	if r := os.Getenv("CONCURRENCY"); r != "" {
+		config.numberOfMessages, _ = strconv.Atoi(r)
+	}
+
+	if r := os.Getenv("TOPIC_ARN"); r != "" {
+		config.topic_arn = r
+	}
+
+	if r := os.Getenv("LOG_LEVEL"); r != "" {
+		opts := &slog.HandlerOptions{
+			Level: slog.LevelInfo,
+		}
+		logLevel := r
+		switch logLevel {
+		case "debug":
+			opts = &slog.HandlerOptions{
+				Level: slog.LevelDebug,
+			}
+		case "error":
+			opts = &slog.HandlerOptions{
+				Level: slog.LevelError,
+			}
+		case "warn":
+			opts = &slog.HandlerOptions{
+				Level: slog.LevelWarn,
+			}
+		}
+		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, opts)))
+	}
+
+	sns.BatchON()
+
+	ch := make(chan string)
+	for i := 0; i < config.numberOfGoRoutines; i = i + 1 {
+		go func() {
+			topic, err := sns.NewTopic(config.topic_arn)
+			if err != nil {
+				slog.Error("Error creating topic %s: %s", config.topic_arn, err)
+				return
+			}
+			ctx := context.Background()
+			i := 0
+			for {
+				i = i + 1
+				select {
+				case msg, ok := <-ch:
+					if !ok {
+						return // channel closed
+					}
+
+					w := topic.NewWriter(ctx)
+					w.Attributes().Set("count", fmt.Sprintf("%d", i))
+					_, err := w.Write([]byte(msg))
+					if err != nil {
+						slog.Error("Failed to write %d bytes into the msg writer: %s", len(msg), err)
+						return
+					}
+					err = w.Close()
+					if err != nil {
+						slog.Error("Failed to close %d bytes msg writer buffer: %s", len(msg), err)
+						return
+					}
+					//if _, err := io.Copy(w, m.Body); err != nil {
+				default:
+				}
+			}
+
+		}()
+	}
+
+	for i := 0; i < config.numberOfMessages; i = i + 1 {
+		msg := randString(100, 240000)
+		ch <- msg
+	}
+
+	ch <- "POISON_PILL"
+
+	close(ch)
+	fmt.Println(batching.GetStats())
+	sns.BatchOFF()
+}

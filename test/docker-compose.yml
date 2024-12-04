@@ -1,0 +1,34 @@
+version: '3'
+
+services:
+  client:
+    image: golang:1.21
+    # Official Go Image: The official Go Docker image sets /go as the default GOPATH
+    volumes:
+      - ..:/go/src/github.com/yurizf/go-aws-msg-with-batching
+    # entrypoint: sh -c "pwd && ls -laF"
+    entrypoint: ./run.sh
+    working_dir: /go/src/github.com/yurizf/go-aws-msg-with-batching/test/client
+    environment:
+      - LOG_LEVEL=debug
+      - AWS_ACCESS_KEY=${ACCESS_KEY}
+      - AWS_SECRET_ACCESS_KEY=${SECRET_ACCESS_KEY}
+      - TOPIC_ARN=${SNS_TOPIC_ARN}
+      - AWS_REGION=us-west-2
+      - AWS_DEFAULT_REGION=us-west-2
+      - TOTAL_MESSAGES=${TOTAL_MESSAGES}
+      - CONCURRENCY=${CONCURRENCY}
+  server:
+    image: golang:1.21
+    volumes:
+      - ..:/go/src/github.com/yurizf/go-aws-msg-with-batching
+    # entrypoint: sh -c "pwd && ls -laF"
+    entrypoint: ./run.sh
+    working_dir: /go/src/github.com/yurizf/go-aws-msg-with-batching/test/server
+    environment:
+      - LOG_LEVEL=debug
+      - AWS_ACCESS_KEY=${ACCESS_KEY}
+      - AWS_SECRET_ACCESS_KEY=${SECRET_ACCESS_KEY}
+      - AWS_REGION=us-west-2
+      - AWS_DEFAULT_REGION=us-west-2
+      - TOPIC_URL=${SQS_TOPIC_URL}
