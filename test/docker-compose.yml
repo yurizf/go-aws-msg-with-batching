@@ -1,0 +1,25 @@
+version: '3'
+
+services:
+  seeder:
+    image: golang:1.21
+    volumes:
+      - ../..:/go/src/github.com/yurizf/go-aws-msg-with-batching
+    entrypoint: go run main.go
+    working_dir: /go/src/github.com/yurizf/go-aws-msg-with-batching/test/client
+    environment:
+      - LOG_LEVEL=debug
+      - AWS_ACCESS_KEY=${AWS_ACCESS_KEY}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_REGION="us-west-2"
+  stresser:
+    image: golang:1.21
+    volumes:
+      - ../..:/go/src/github.com/yurizf/go-aws-msg-with-batching
+    entrypoint: go run main.go stress
+    working_dir: /go/src/github.com/yurizf/go-aws-msg-with-batching/test/server
+    environment:
+      - LOG_LEVEL=debug
+      - AWS_ACCESS_KEY=${AWS_ACCESS_KEY}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_REGION="us-west-2"
