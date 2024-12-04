@@ -24,10 +24,6 @@ import (
 	msg "github.com/zerofox-oss/go-msg"
 )
 
-func BatchServer() {
-	toBatch = true
-}
-
 func init() {
 	var b [8]byte
 
@@ -55,7 +51,6 @@ type Server struct {
 	// AWS QueueURL
 	QueueURL string
 	// Concrete instance of SQSAPI
-	//Svc sqsiface.SQSAPI
 	Svc awsinterfaces.SQSReceiver
 
 	maxConcurrentReceives chan struct{} // The maximum number of message processing routines allowed
@@ -67,6 +62,7 @@ type Server struct {
 	serverCtx          context.Context    // context used to control the life of the Server
 	serverCancelFunc   context.CancelFunc // CancelFunc to signal the server should stop requesting messages
 	session            *session.Session   // session used to re-create `Svc` when needed
+	batched            bool
 }
 
 // convertToMsgAttrs creates msg.Attributes from sqs.Message.Attributes.
@@ -113,10 +109,10 @@ func (s *Server) Serve(r msg.Receiver) error {
 
 			for _, m := range resp.Messages {
 				if m.MessageId != nil {
-					log.Printf("[TRACE] Received SQS Message: %s\n", *m.MessageId)
+					log.Printf("[TRACE] Received SQS Message: %s of %d bytes\n", *m.MessageId, len(*m.Body))
 				}
 
-				if toBatch {
+				if s.batched {
 					err = s.serveBatch(m, r)
 					continue
 				}
@@ -184,6 +180,8 @@ func (s *Server) serveBatch(m *sqs.Message, r msg.Receiver) error {
 		return err
 	}
 
+	log.Printf("[TRACE] Unpacked %d messages from the batch", len(msgs))
+
 	// delete batch from SQS right away
 	_, err = s.Svc.DeleteMessage(&sqs.DeleteMessageInput{
 		QueueUrl:      aws.String(s.QueueURL),
@@ -224,7 +222,7 @@ func (s *Server) serveBatch(m *sqs.Message, r msg.Receiver) error {
 					}
 
 					if err := r.Receive(s.receiverCtx, m_p); err != nil {
-						log.Printf("[ERROR] Receiver error: %s; will retry after visibility timeout", err.Error())
+						log.Printf("[ERROR] Receiver error: %s; will retry", err.Error())
 
 						failed = append(failed, payload)
 
@@ -355,6 +353,18 @@ func NewServer(queueURL string, cl int, retryTimeout int64, opts ...Option) (msg
 	}
 
 	return srv, nil
+}
+
+func NewBatchedServer(queueURL string, cl int, retryTimeout int64, opts ...Option) (msg.Server, error) {
+	srv, err := NewServer(queueURL, cl, retryTimeout, opts...)
+	if err == nil {
+		ret_p, ok := srv.(*Server)
+		if ok {
+			ret_p.batched = true
+		}
+	}
+
+	return srv, err
 }
 
 func getConf(s *Server) (*aws.Config, error) {

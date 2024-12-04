@@ -118,14 +118,11 @@ func (r *BatchReceiver) Receive(ctx context.Context, m *msg.Message) error {
 // them, and delete them from the queue successfully.
 func TestServer_ServeBatched(t *testing.T) {
 	msgs := newSQSMessages(1)
-	toBatch = true
-	defer func() {
-		toBatch = false
-	}()
 
 	(*msgs)[0].Body = aws.String(batching.Batch([]string{"12345", "文字材料"}))
 	mockSQS := newMockSQSAPI(msgs, t)
 	srv := newMockServer(1, mockSQS)
+	srv.batched = true
 
 	r := &BatchReceiver{
 		t:        t,
@@ -372,8 +369,7 @@ func TestWithRetryJitter_ErrorOnInvalidJitter(t *testing.T) {
 	err := optionFunc(srv)
 	if err == nil {
 		t.Errorf("Expected error, received nil")
-	}
-	if !strings.HasPrefix(err.Error(), "invalid jitter:") {
+	} else if !strings.HasPrefix(err.Error(), "invalid jitter:") {
 		t.Errorf("expected error to start with 'invalid jitter:', error is '%s'", err)
 	}
 }

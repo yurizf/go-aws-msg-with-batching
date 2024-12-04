@@ -22,25 +22,9 @@ import (
 
 // Topic configures and manages SQSAPI for sqs.MessageWriter
 type Topic struct {
-	QueueURL string
-	Svc      sqsiface.SQSAPI
-}
-
-var toBatch bool
-
-// Starts the batching engine
-func BatchON() {
-	batching.New(batching.SQS)
-	toBatch = true
-}
-
-// BatchOFF - drains the batch queue and stops the batching engine
-// Usually called on a termination signal
-func BatchOFF() {
-	toBatch = false
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	batching.ShutDown(ctx)
+	QueueURL   string
+	Svc        sqsiface.SQSAPI
+	batchTopic *batching.Topic
 }
 
 // NewTopic returns an sqs.Topic with fully configured SQSAPI
@@ -64,15 +48,23 @@ func NewTopic(queueURL string) (msg.Topic, error) {
 
 	svc := sqs.New(sess, conf)
 
-	if toBatch {
-		// defgault timeout
-		batching.NewTopic(queueURL, svc, 1*time.Second)
-	}
-
 	return &Topic{
 		QueueURL: queueURL,
 		Svc:      svc,
 	}, nil
+}
+
+func NewBatchTopic(queueURL string) (msg.Topic, error) {
+	t, err := NewTopic(queueURL)
+	if err != nil {
+		return t, err
+	}
+
+	tt, _ := t.(*Topic)
+	tt.batchTopic, err = batching.NewTopic(queueURL, tt.Svc, 1*time.Second)
+
+	return t, err
+
 }
 
 // NewWriter returns a new sqs.MessageWriter
@@ -100,11 +92,12 @@ type MessageWriter struct {
 	delaySeconds int64
 
 	// sqsClient is the SQS interface
-	// sqsClient sqsiface.SQSAPI
 	sqsClient awsinterfaces.SQSSender
 
 	// queueURL is the URL to the queue.
 	queueURL string
+
+	batchTopic *batching.Topic
 }
 
 // Attributes returns the msg.Attributes associated with the MessageWriter
@@ -148,9 +141,9 @@ func (w *MessageWriter) Close() error {
 		params.MessageAttributes = buildSQSAttributes(w.Attributes())
 	}
 
-	if toBatch {
-		batching.SetAttributes(w.queueURL, params.MessageAttributes)
-		return batching.Append(w.queueURL, w.buf.String())
+	if w.batchTopic != nil {
+		w.batchTopic.SetAttributes(params.MessageAttributes)
+		return w.batchTopic.Append(w.buf.String())
 	}
 
 	log.Printf("[TRACE] writing to sqs: %v", params)
@@ -162,8 +155,8 @@ func (w *MessageWriter) Close() error {
 // The delay must be between 0 and 900 seconds, according to the awsinterfaces sdk.
 func (w *MessageWriter) SetDelay(delay time.Duration) {
 	w.delaySeconds = int64(math.Min(math.Max(delay.Seconds(), 0), 900))
-	if toBatch {
-		batching.SetTopicTimeout(w.queueURL, time.Duration(w.delaySeconds)*time.Second)
+	if w.batchTopic != nil {
+		w.batchTopic.SetTopicTimeout(time.Duration(w.delaySeconds) * time.Second)
 	}
 }
 
