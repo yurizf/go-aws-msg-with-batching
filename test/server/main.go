@@ -15,6 +15,7 @@ import (
 
 func main() {
 	var topic_url string
+	// https://betterstack.com/community/guides/logging/logging-in-go/
 	if r := os.Getenv("TOPIC_URL"); r != "" {
 		topic_url = r
 	}

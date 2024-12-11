@@ -42,6 +42,7 @@ func main() {
 		config.topic_arn = r
 	}
 
+	// https://betterstack.com/community/guides/logging/logging-in-go/
 	if r := os.Getenv("LOG_LEVEL"); r != "" {
 		opts := &slog.HandlerOptions{
 			Level: slog.LevelInfo,

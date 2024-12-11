@@ -127,6 +127,7 @@ func sendMessages(parentCtx context.Context, topicARN string, expectedByteLength
 
 	payload := Batch(payloads)
 	slog.Debug(fmt.Sprintf("created batch of size %d to send to %s", len(payload), topicARN))
+	fmt.Println("payload", len(payloads), len(payload))
 
 	err := send(parentCtx, topicARN, payload)
 
@@ -157,6 +158,7 @@ func send(parentCtx context.Context, topicARN string, payload string) error {
 		}
 
 		slog.Debug(fmt.Sprintf("sending message of %d bytes to sns %s", len(payload), topicARN))
+		fmt.Println("payload", len(payload))
 		for i := 0; i < 3; i++ {
 			_, err = ctl.snsClients[topicARN].PublishWithContext(ctx, params)
 			if err != nil {
