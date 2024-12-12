@@ -42,7 +42,7 @@ func main() {
 		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, opts)))
 	}
 
-	sqsSrv, err := sqs.NewServer(topic_url, 10, int64(30))
+	sqsSrv, err := sqs.NewBatchedServer(topic_url, 10, int64(30))
 	if err != nil {
 		slog.Error("Error creating Server: %s", err)
 		return

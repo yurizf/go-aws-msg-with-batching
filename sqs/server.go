@@ -24,10 +24,6 @@ import (
 	msg "github.com/zerofox-oss/go-msg"
 )
 
-func BatchServer() {
-	toBatch = true
-}
-
 func init() {
 	var b [8]byte
 
@@ -55,7 +51,6 @@ type Server struct {
 	// AWS QueueURL
 	QueueURL string
 	// Concrete instance of SQSAPI
-	//Svc sqsiface.SQSAPI
 	Svc awsinterfaces.SQSReceiver
 
 	maxConcurrentReceives chan struct{} // The maximum number of message processing routines allowed
@@ -67,6 +62,7 @@ type Server struct {
 	serverCtx          context.Context    // context used to control the life of the Server
 	serverCancelFunc   context.CancelFunc // CancelFunc to signal the server should stop requesting messages
 	session            *session.Session   // session used to re-create `Svc` when needed
+	batched            bool
 }
 
 // convertToMsgAttrs creates msg.Attributes from sqs.Message.Attributes.
@@ -116,7 +112,7 @@ func (s *Server) Serve(r msg.Receiver) error {
 					log.Printf("[TRACE] Received SQS Message: %s\n", *m.MessageId)
 				}
 
-				if toBatch {
+				if s.batched {
 					err = s.serveBatch(m, r)
 					continue
 				}
@@ -355,6 +351,18 @@ func NewServer(queueURL string, cl int, retryTimeout int64, opts ...Option) (msg
 	}
 
 	return srv, nil
+}
+
+func NewBatchedServer(queueURL string, cl int, retryTimeout int64, opts ...Option) (msg.Server, error) {
+	srv, err := NewServer(queueURL, cl, retryTimeout, opts...)
+	if err == nil {
+		ret, ok := srv.(*Server)
+		if ok {
+			ret.batched = true
+		}
+	}
+
+	return srv, err
 }
 
 func getConf(s *Server) (*aws.Config, error) {

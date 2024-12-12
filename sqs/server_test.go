@@ -118,14 +118,11 @@ func (r *BatchReceiver) Receive(ctx context.Context, m *msg.Message) error {
 // them, and delete them from the queue successfully.
 func TestServer_ServeBatched(t *testing.T) {
 	msgs := newSQSMessages(1)
-	toBatch = true
-	defer func() {
-		toBatch = false
-	}()
 
 	(*msgs)[0].Body = aws.String(batching.Batch([]string{"12345", "文字材料"}))
 	mockSQS := newMockSQSAPI(msgs, t)
 	srv := newMockServer(1, mockSQS)
+	srv.batched = true
 
 	r := &BatchReceiver{
 		t:        t,

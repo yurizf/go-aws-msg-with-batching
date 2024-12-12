@@ -2,6 +2,8 @@ module github.com/yurizf/go-aws-msg-with-batching/test/client
 
 go 1.21
 
+// require github.com/yurizf/go-aws-msg-with-batching
+
 require github.com/yurizf/go-aws-msg-with-batching v0.0.0-20241209162435-1bda2bea3bf5
 
 require (

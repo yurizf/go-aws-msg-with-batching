@@ -26,29 +26,13 @@ import (
 
 // Topic configures and manages SNSAPI for sns.MessageWriter.
 type Topic struct {
-	//Svc      snsiface.SNSAPI
-	Svc      awsinterfaces.SNSPublisher
-	TopicARN string
-	session  *session.Session
+	Svc        awsinterfaces.SNSPublisher
+	TopicARN   string
+	session    *session.Session
+	batchTopic *batching.Topic
 }
 
 var toBatch bool
-
-// BatchON turns on SNS Batching to save the costs.
-// It starts the batching engine by calling batching.New(batching.SNS)
-func BatchON() {
-	batching.New(batching.SNS)
-	toBatch = true
-}
-
-// BatchOFF - drains the batch queue called to shut down the batching engine.
-// Usually called on a termination signal
-func BatchOFF() {
-	toBatch = false
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	batching.ShutDown(ctx)
-	defer cancel()
-}
 
 func getConf(t *Topic) (*aws.Config, error) {
 	svc, ok := t.Svc.(*sns.SNS)
@@ -108,6 +92,14 @@ func NewTopic(topicARN string, opts ...Option) (msg.Topic, error) {
 	return b64.Encoder(topic), nil
 }
 
+func NewBatchedTopic(topicARN string, opts ...Option) (msg.Topic, error) {
+	topic, err := NewUnencodedBatchedTopic(topicARN, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return b64.Encoder(topic), nil
+}
+
 // NewUnencodedTopic creates an concrete SNS msg.Topic
 //
 // Messages published by the `Topic` returned will not
@@ -149,25 +141,33 @@ func NewUnencodedTopic(topicARN string, opts ...Option) (msg.Topic, error) {
 		}
 	}
 
-	if toBatch {
-		batching.NewTopic(topicARN, t.Svc, 2*time.Second)
+	return t, err
+}
+
+func NewUnencodedBatchedTopic(topicARN string, opts ...Option) (msg.Topic, error) {
+
+	t, err := NewUnencodedTopic(topicARN, opts...)
+	if err == nil {
+		tt, _ := t.(*Topic)
+		tt.batchTopic, err = batching.NewTopic(topicARN, tt.Svc, 2*time.Second)
 	}
 
 	return t, err
 }
 
 // NewWriter returns a sns.MessageWriter instance for writing to
-// the configured SNS topic.
+// the configured SNS batchTopic.
 func (t *Topic) NewWriter(ctx context.Context) msg.MessageWriter {
 	return &MessageWriter{
 		attributes: make(map[string][]string),
 		snsClient:  t.Svc,
 		topicARN:   t.TopicARN,
+		batchTopic: t.batchTopic,
 		ctx:        ctx,
 	}
 }
 
-// MessageWriter writes data to an output SNS topic as configured via its
+// MessageWriter writes data to an output SNS batchTopic as configured via its
 // topicARN.
 type MessageWriter struct {
 	msg.MessageWriter
@@ -177,9 +177,10 @@ type MessageWriter struct {
 	closed     bool
 	mux        sync.Mutex
 
-	//snsClient snsiface.SNSAPI
 	snsClient awsinterfaces.SNSPublisher
 	topicARN  string
+
+	batchTopic *batching.Topic
 
 	ctx context.Context
 }
@@ -212,9 +213,9 @@ func (w *MessageWriter) Close() error {
 		params.MessageAttributes = buildSNSAttributes(w.Attributes())
 	}
 
-	if toBatch {
-		batching.SetAttributes(w.topicARN, params.MessageAttributes)
-		return batching.Append(w.topicARN, w.buf.String())
+	if w.batchTopic != nil {
+		w.batchTopic.SetAttributes(params.MessageAttributes)
+		return w.batchTopic.Append(w.buf.String())
 	}
 
 	log.Printf("[TRACE] writing to sns: %v", params)

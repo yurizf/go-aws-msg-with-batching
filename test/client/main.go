@@ -65,12 +65,10 @@ func main() {
 		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, opts)))
 	}
 
-	sns.BatchON()
-
 	ch := make(chan string)
 	for i := 0; i < config.numberOfGoRoutines; i = i + 1 {
 		go func() {
-			topic, err := sns.NewTopic(config.topic_arn)
+			topic, err := sns.NewBatchedTopic(config.topic_arn)
 			if err != nil {
 				slog.Error("Error creating topic %s: %s", config.topic_arn, err)
 				return

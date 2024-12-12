@@ -101,47 +101,48 @@ func Test_SNS(t *testing.T) {
 	tt := tests[0]
 	t.Run(tt.name, func(t *testing.T) {
 
-		err := New(SNS)
+		slog.Info(tt.name)
+		topic, err := NewTopic("fake-topic", tt.args.publisher, 1*time.Second)
 		if err != nil {
-			t.Fatalf("Could not start batching %v", err)
+			t.Errorf("could not create topic: %s", err)
 		}
 
 		defer func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			ShutDown(ctx)
+			topic.ShutDown(ctx)
 			defer cancel()
 		}()
 
-		NewTopic("fake-topic", tt.args.publisher, 1*time.Second)
 		//SetTopicTimeout("fake-topic", 1*time.Second)
 
 		for _, msg := range tt.args.payloads {
-			Append("fake-topic", msg)
+			if err = topic.Append(msg); err != nil {
+				t.Errorf("could not append msg %s to topic: %s", msg, err)
+			}
 		}
 
 		// time.Sleep(3 * time.Second)
-		slog.Info(tt.name)
+
 	})
 
 	tt = tests[1]
 	t.Run(tt.name, func(t *testing.T) {
 		slog.Info(tt.name)
 
-		err := New(SNS)
+		topic, err := NewTopic("fake-topic-1", tt.args.publisher, 30*time.Second)
 		if err != nil {
-			t.Fatalf("Could not start batching %v", err)
+			t.Errorf("could not create topic: %s", err)
 		}
 		defer func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			ShutDown(ctx)
+			topic.ShutDown(ctx)
 			defer cancel()
 		}()
 		//SetTopicTimeout("fake-topic-1", 30*time.Second)
-		NewTopic("fake-topic-1", tt.args.publisher, 30*time.Second)
 
 		for i := 0; i < 3000; i = i + 1 {
 			for _, msg := range tt.args.payloads {
-				Append("fake-topic-1", msg)
+				topic.Append(msg)
 			}
 		}
 
