@@ -89,12 +89,13 @@ func main() {
 					w.Attributes().Set("count", fmt.Sprintf("%d", i))
 					_, err := w.Write([]byte(msg))
 					if err != nil {
-						slog.Error("Failed to write %d bytes into the msg writer: %s", len(msg), err)
+						slog.Error(fmt.Sprintf("Failed to write %d bytes into the msg writer: %s", len(msg), err))
 						return
 					}
+					slog.Debug(fmt.Sprintf("Wrote %d bytes to the buffer", len(msg)))
 					err = w.Close()
 					if err != nil {
-						slog.Error("Failed to close %d bytes msg writer buffer: %s", len(msg), err)
+						slog.Error(fmt.Sprintf("Failed to close %d bytes msg writer buffer: %s", len(msg), err))
 						return
 					}
 					//if _, err := io.Copy(w, m.Body); err != nil {

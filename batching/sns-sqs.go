@@ -87,7 +87,7 @@ func Append(topicARN string, payload string) error {
 
 	if byteLength+newMsg.byteLen() > LARGEST_MSG_LENGTH {
 		slog.Debug(fmt.Sprintf("reached max SNS msg size, sending %d bytes", byteLength))
-		// mux is locked
+
 		err := sendMessages(ctl.batcherCtx, topicARN, byteLength)
 		if err != nil {
 			slog.Error(fmt.Sprintf("Error sending msg to %s: %v", topicARN, err))
@@ -109,6 +109,7 @@ func sendMessages(parentCtx context.Context, topicARN string, expectedByteLength
 	// since [topicArn] maps have not been locked, it's possible that
 	// another thread sendMessages and reset the msg slice.
 	if ctl.byteLength[topicARN] < expectedByteLength {
+		slog.Debug(fmt.Sprintf("another thread sent messages. expected bytelength %d vs actual %d", expectedByteLength, ctl.byteLength[topicARN]))
 		return nil
 	}
 
