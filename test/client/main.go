@@ -3,12 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/yurizf/go-aws-msg-with-batching/batching"
 	"github.com/yurizf/go-aws-msg-with-batching/sns"
 	"log/slog"
 	"math/rand"
 	"os"
 	"strconv"
+	"time"
 )
 
 const allChars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890_-/+?!@#$%^&*()[]"
@@ -68,11 +68,12 @@ func main() {
 	ch := make(chan string)
 	for i := 0; i < config.numberOfGoRoutines; i = i + 1 {
 		go func() {
-			topic, err := sns.NewBatchedTopic(config.topic_arn)
+			topic, shutdownFunc, err := sns.NewBatchedTopic(config.topic_arn)
 			if err != nil {
 				slog.Error("Error creating topic %s: %s", config.topic_arn, err)
 				return
 			}
+
 			ctx := context.Background()
 			i := 0
 			for {
@@ -80,6 +81,9 @@ func main() {
 				select {
 				case msg, ok := <-ch:
 					if !ok {
+						ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+						defer cancel()
+						shutdownFunc(ctx)
 						return // channel closed
 					}
 
@@ -112,6 +116,5 @@ func main() {
 	ch <- "POISON_PILL"
 
 	close(ch)
-	fmt.Println(batching.GetStats())
-	sns.BatchOFF()
+
 }

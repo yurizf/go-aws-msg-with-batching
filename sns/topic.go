@@ -92,12 +92,12 @@ func NewTopic(topicARN string, opts ...Option) (msg.Topic, error) {
 	return b64.Encoder(topic), nil
 }
 
-func NewBatchedTopic(topicARN string, opts ...Option) (msg.Topic, error) {
-	topic, err := NewUnencodedBatchedTopic(topicARN, opts...)
+func NewBatchedTopic(topicARN string, opts ...Option) (msg.Topic, func(ctx context.Context) error, error) {
+	topic, shutdownFunc, err := NewUnencodedBatchedTopic(topicARN, opts...)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return b64.Encoder(topic), nil
+	return b64.Encoder(topic), shutdownFunc, nil
 }
 
 // NewUnencodedTopic creates an concrete SNS msg.Topic
@@ -144,15 +144,16 @@ func NewUnencodedTopic(topicARN string, opts ...Option) (msg.Topic, error) {
 	return t, err
 }
 
-func NewUnencodedBatchedTopic(topicARN string, opts ...Option) (msg.Topic, error) {
+func NewUnencodedBatchedTopic(topicARN string, opts ...Option) (msg.Topic, func(ctx context.Context) error, error) {
 
 	t, err := NewUnencodedTopic(topicARN, opts...)
 	if err == nil {
 		tt, _ := t.(*Topic)
 		tt.batchTopic, err = batching.NewTopic(topicARN, tt.Svc, 2*time.Second)
+		return t, tt.batchTopic.ShutDown, err
 	}
 
-	return t, err
+	return t, nil, err
 }
 
 // NewWriter returns a sns.MessageWriter instance for writing to
