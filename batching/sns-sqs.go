@@ -198,7 +198,7 @@ func NewTopic(topicARN string, p any, timeout time.Duration, concurrency ...int)
 		for {
 			select {
 			case <-topic.batcherCtx.Done():
-				slog.Info("batcher is shutting down")
+				slog.Info("batcher is shutting down...")
 				close(topic.concurrency)
 				return
 

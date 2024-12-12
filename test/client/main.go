@@ -81,6 +81,7 @@ func main() {
 				select {
 				case msg, ok := <-ch:
 					if !ok {
+						slog.Info("Channel is closed. Shutting down...")
 						ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 						defer cancel()
 						shutdownFunc(ctx)
@@ -110,6 +111,7 @@ func main() {
 
 	for i := 0; i < config.numberOfMessages; i = i + 1 {
 		msg := randString(100, 240000)
+		slog.Debug(fmt.Sprintf("Generated random string of %d bytes", len(msg)))
 		ch <- msg
 	}
 
