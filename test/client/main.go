@@ -122,6 +122,8 @@ func main() {
 	time.Sleep(60 * time.Second)
 	close(ch)
 	batching.WG.Wait()
+
+	fmt.Println(fmt.Sprintf("length of debug array is %d", len(batching.Debug.Debug)))
 	for _, v := range batching.Debug.Debug {
 		fmt.Println(v)
 	}

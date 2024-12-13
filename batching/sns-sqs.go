@@ -125,8 +125,8 @@ func (ctl *Topic) send(payload string) error {
 
 		slog.Debug(fmt.Sprintf("sending message of %d bytes to sns %s", len(payload), ctl.arnOrUrl))
 		Debug.Mux.Lock()
-		defer Debug.Mux.Unlock()
 		Debug.Debug = append(Debug.Debug, fmt.Sprintf("%s: %d batchLen: %d resendLen: %d overflowLen: %d", time.Now(), getGOID(), ctl.batch.Len(), len(ctl.resend), len(ctl.overflow)))
+		Debug.Mux.Unlock()
 
 		for i := 0; i < 3; i++ {
 			_, err = ctl.snsClient.PublishWithContext(ctx, params)
@@ -207,6 +207,7 @@ func NewTopic(topicARN string, p any, timeout time.Duration, concurrency ...int)
 			select {
 			case <-topic.batcherCtx.Done():
 				slog.Info("batcher is shutting down...")
+
 				close(topic.concurrency)
 				return
 
@@ -234,7 +235,6 @@ func NewTopic(topicARN string, p any, timeout time.Duration, concurrency ...int)
 					}(v)
 				}
 				topic.resend = tmp
-				slog.Debug(fmt.Sprintf("updated resend list is of length %d for %s", len(topic.resend), topic.arnOrUrl))
 
 				if topic.batch.Len() > 0 && time.Now().Sub(topic.earliest) > topic.timeout {
 					topic.concurrency <- struct{}{}
