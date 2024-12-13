@@ -98,10 +98,10 @@ func main() {
 						slog.Error(fmt.Sprintf("Failed to write %d bytes into the msg writer: %s", len(msg), err))
 						return
 					}
-					slog.Debug(fmt.Sprintf("Wrote %d bytes to the buffer", len(msg)))
+					slog.Debug(fmt.Sprintf("Wrote %d bytes to the buffer %p", len(msg), &w))
 					err = w.Close()
 					if err != nil {
-						slog.Error(fmt.Sprintf("Failed to close %d bytes msg writer buffer: %s", len(msg), err))
+						slog.Error(fmt.Sprintf("Failed to close %d bytes msg writer buffer %p: %s", len(msg), &w, err))
 						return
 					}
 					//if _, err := io.Copy(w, m.Body); err != nil {

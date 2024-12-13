@@ -102,7 +102,7 @@ func (ctl *Topic) Append(payload string) error {
 		ctl.earliest = time.Now()
 	}
 
-	_, err := ctl.batch.Write([]byte(p))
+	_, err := ctl.batch.WriteString(p)
 
 	return err
 }
