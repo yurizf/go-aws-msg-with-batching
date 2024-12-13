@@ -68,7 +68,9 @@ func main() {
 
 	ch := make(chan string)
 	for i := 0; i < config.numberOfGoRoutines; i = i + 1 {
+		batching.WG.Add(1)
 		go func() {
+			defer batching.WG.Done()
 			topic, shutdownFunc, err := sns.NewBatchedTopic(config.topic_arn)
 			if err != nil {
 				slog.Error("Error creating topic %s: %s", config.topic_arn, err)
@@ -117,10 +119,11 @@ func main() {
 	}
 
 	ch <- "POISON_PILL"
-
+	time.Sleep(60 * time.Second)
 	close(ch)
+	batching.WG.Wait()
 	for _, v := range batching.Debug.Debug {
 		fmt.Println(v)
 	}
-
+	fmt.Println("Finishing...")
 }

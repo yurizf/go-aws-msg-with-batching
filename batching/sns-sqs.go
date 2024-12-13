@@ -218,10 +218,12 @@ func NewTopic(topicARN string, p any, timeout time.Duration, concurrency ...int)
 					// concurrency limit how many threads will hit SNS/SQS endpoint simultaneously
 					topic.concurrency <- struct{}{}
 
+					WG.Add(1)
 					go func(s string) {
 						defer func() {
 							<-topic.concurrency
 						}()
+						defer WG.Done()
 
 						slog.Debug(fmt.Sprintf("resending failed %d bytes to %s", len(s), topic.arnOrUrl))
 						if err := topic.send(s); err != nil {
@@ -240,10 +242,12 @@ func NewTopic(topicARN string, p any, timeout time.Duration, concurrency ...int)
 
 					// make it a go routine to unblock top level select
 					// even tho we spawn only one go routine, we limit concurrency b/c we are in the loop
+					WG.Add(1)
 					go func() {
 						defer func() {
 							<-topic.concurrency
 						}()
+						defer WG.Done()
 
 						s := topic.batch.String()
 						err := topic.send(s)
@@ -306,6 +310,8 @@ func (ctl *Topic) ShutDown(ctx context.Context) error {
 		}
 	}
 }
+
+var WG sync.WaitGroup
 
 var Debug = struct {
 	Mux   sync.Mutex
