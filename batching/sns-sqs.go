@@ -84,7 +84,7 @@ func (ctl *Topic) Append(payload string) error {
 		return fmt.Errorf("message is too long: %d", len(payload))
 	}
 
-	p := encode(payload)
+	p := prefixWithLength(payload)
 
 	slog.Debug(fmt.Sprintf("appending %d to %d", len(p), ctl.batch.Len()))
 
@@ -103,6 +103,7 @@ func (ctl *Topic) Append(payload string) error {
 	}
 
 	_, err := ctl.batch.WriteString(p)
+	ctl.number++
 
 	return err
 }
@@ -130,6 +131,10 @@ func (ctl *Topic) send(payload string) error {
 
 		for i := 0; i < 3; i++ {
 			_, err = ctl.snsClient.PublishWithContext(ctx, params)
+			// debugging locally err := fmt.Errorf("fake")
+			// fmt.Printf("*************** Fake SNS sending of %d bytes", len(*params.Message))
+			// err = nil
+
 			if err != nil {
 				slog.Error(fmt.Sprintf("error sending message of %d bytes to sns %s: %s", len(payload), ctl.arnOrUrl, err.Error()))
 				time.Sleep(time.Duration(int64((i+1)*100) * int64(time.Millisecond)))
@@ -242,51 +247,50 @@ func NewTopic(topicARN string, p any, timeout time.Duration, concurrency ...int)
 					topic.mux.Lock()
 					s := topic.batch.String()
 					topic.batch.Reset()
+					topic.number = 0
 					topic.mux.Unlock()
 
-					if len(s) > 0 { // sanity check:
-						topic.concurrency <- struct{}{}
+					topic.concurrency <- struct{}{}
 
-						slog.Debug(fmt.Sprintf("sending a Batch of %d on timeout to topic %s", len(s), topic.arnOrUrl))
+					slog.Debug(fmt.Sprintf("sending a Batch of %d on timeout to topic %s", len(s), topic.arnOrUrl))
 
-						// make it a go routine to unblock top level select
-						// even tho we spawn only one go routine, we limit concurrency b/c we are in the loop
-						WG.Add(1)
-						go func(payload string) {
-							defer func() {
-								<-topic.concurrency
-							}()
-							defer WG.Done()
+					// make it a go routine to unblock top level select
+					// even tho we spawn only one go routine, we limit concurrency b/c we are in the loop
+					WG.Add(1)
+					go func(payload string) {
+						defer func() {
+							<-topic.concurrency
+						}()
+						defer WG.Done()
 
-							err := topic.send(payload)
+						err := topic.send(payload)
 
-							topic.mux.Lock()
-							defer topic.mux.Unlock()
+						topic.mux.Lock()
+						defer topic.mux.Unlock()
 
-							if err != nil {
-								topic.resend = append(topic.resend, s)
-							}
+						if err != nil {
+							topic.resend = append(topic.resend, s)
+						}
 
-							if len(topic.overflow) > 0 {
-								topic.earliest = topic.overflow[0].placed
+						if len(topic.overflow) > 0 {
+							topic.earliest = topic.overflow[0].placed
 
-								j := 0
-								for i, o := range topic.overflow {
-									j = i
-									topic.batch.Write([]byte(encode(o.payload)))
-									if i < len(topic.overflow)-1 && topic.batch.Len()+len(encode(topic.overflow[i+1].payload)) > MAX_MSG_LENGTH {
-										break
-									}
-								}
-								if j < len(topic.overflow)-1 {
-									copy(topic.overflow[0:], topic.overflow[j+1:])
-									topic.overflow = topic.overflow[:len(topic.overflow)-j]
-								} else {
-									topic.overflow = make([]msg, 0, 128)
+							j := 0
+							for i, o := range topic.overflow {
+								j = i
+								topic.batch.Write([]byte(prefixWithLength(o.payload)))
+								if i < len(topic.overflow)-1 && topic.batch.Len()+len(prefixWithLength(topic.overflow[i+1].payload)) > MAX_MSG_LENGTH {
+									break
 								}
 							}
-						}(s)
-					}
+							if j < len(topic.overflow)-1 {
+								copy(topic.overflow[0:], topic.overflow[j+1:])
+								topic.overflow = topic.overflow[:len(topic.overflow)-j]
+							} else {
+								topic.overflow = make([]msg, 0, 128)
+							}
+						}
+					}(s)
 				}
 			}
 		}
@@ -328,7 +332,7 @@ var Debug = struct {
 	Debug: make([]string, 0, 10000),
 }
 
-func ExtractGID(s []byte) int64 {
+func extractGID(s []byte) int64 {
 	s = s[len("goroutine "):]
 	s = s[:bytes.IndexByte(s, ' ')]
 	gid, _ := strconv.ParseInt(string(s), 10, 64)
@@ -338,5 +342,5 @@ func ExtractGID(s []byte) int64 {
 // Parse the goid from runtime.Stack() output. Slow, but it works.
 func getGOID() int64 {
 	var buf [64]byte
-	return ExtractGID(buf[:runtime.Stack(buf[:], false)])
+	return extractGID(buf[:runtime.Stack(buf[:], false)])
 }

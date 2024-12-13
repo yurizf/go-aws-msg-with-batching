@@ -8,19 +8,24 @@ import (
 	"log/slog"
 	"math/rand"
 	"os"
+	"runtime"
 	"strconv"
 	"time"
 )
 
-const allChars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890_-/+?!@#$%^&*()[]"
+const allRunesString = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890_-/+?!@#$%^&*()[]世界象形字形声嶝 (dèng; mountain path)=山(shān;mountain)+登(dēng)"
+
+var allRunes []rune = []rune(allRunesString)
 
 func randString(minLen int, maxLen int) string {
 	// inclusive
 	n := rand.Intn(maxLen-minLen+1) + minLen
-	b := make([]byte, n)
+	b := make([]rune, n)
 	for i := range b {
-		b[i] = allChars[rand.Int63()%int64(len(allChars))]
+		b[i] = allRunes[rand.Int63()%int64(len(allRunes))]
 	}
+	// Encode Unicode code points as UTF-8
+	// Invalid code points converted to Unicode replacement character (U+FFFD). Should not be any
 	return string(b)
 }
 
@@ -113,15 +118,19 @@ func main() {
 	}
 
 	for i := 0; i < config.numberOfMessages; i = i + 1 {
-		msg := randString(100, 240000)
+		msg := randString(100, 15000) // message is uuencoded and gets longer
 		slog.Debug(fmt.Sprintf("Generated random string of %d bytes", len(msg)))
 		ch <- msg
 	}
 
 	ch <- "POISON_PILL"
 	time.Sleep(60 * time.Second)
-	close(ch)
 
+	fmt.Println("closing the message feeding chan.....")
+	close(ch)
+	time.Sleep(30 * time.Second)
+
+	fmt.Printf("after closing channel and waiting for 30 secs, the number of go routine is %d", runtime.NumGoroutine())
 	batching.WG.Wait()
 
 	fmt.Println(fmt.Sprintf("length of debug array is %d", len(batching.Debug.Debug)))

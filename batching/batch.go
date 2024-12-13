@@ -13,7 +13,7 @@ func pad(base62int string) string {
 	return strings.Repeat("0", 4-len(base62int)) + base62int
 }
 
-func encode(payload string) string {
+func prefixWithLength(payload string) string {
 	length := big.NewInt(int64(len(payload))).Text(62)
 	return strings.Repeat("0", 4-len(length)) + length + payload
 }
@@ -32,7 +32,7 @@ func Batch(payloads []string) string {
 	var sb strings.Builder
 
 	for _, msg := range payloads {
-		sb.WriteString(encode(msg))
+		sb.WriteString(prefixWithLength(msg))
 	}
 
 	return sb.String()
