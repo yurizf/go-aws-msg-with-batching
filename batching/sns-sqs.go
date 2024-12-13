@@ -123,9 +123,9 @@ func (ctl *Topic) send(payload string) error {
 			params.MessageAttributes = ctl.snsAttributes
 		}
 
-		slog.Debug(fmt.Sprintf("sending message of %d bytes to sns %s", len(payload), ctl.arnOrUrl))
+		slog.Debug(fmt.Sprintf("in send func: sending message of %d bytes to sns %s", len(payload), ctl.arnOrUrl))
 		Debug.Mux.Lock()
-		Debug.Debug = append(Debug.Debug, fmt.Sprintf("%s: %d batchLen: %d resendLen: %d overflowLen: %d", time.Now(), getGOID(), ctl.batch.Len(), len(ctl.resend), len(ctl.overflow)))
+		Debug.Debug = append(Debug.Debug, fmt.Sprintf("%s: %d batchLen: %d resendLen: %d overflowLen: %d", time.Now(), getGOID(), len(payload), len(ctl.resend), len(ctl.overflow)))
 		Debug.Mux.Unlock()
 
 		for i := 0; i < 3; i++ {
@@ -202,7 +202,9 @@ func NewTopic(topicARN string, p any, timeout time.Duration, concurrency ...int)
 	// So, if the topic is used by multiple threads, only one instance of this routine runs.
 	// if each thread created own topic for this arn/url, they won't collide.
 	// either way it works
+	WG.Add(1)
 	go func() {
+		defer WG.Done()
 		for {
 			select {
 			case <-topic.batcherCtx.Done():
@@ -237,48 +239,54 @@ func NewTopic(topicARN string, p any, timeout time.Duration, concurrency ...int)
 				topic.resend = tmp
 
 				if topic.batch.Len() > 0 && time.Now().Sub(topic.earliest) > topic.timeout {
-					topic.concurrency <- struct{}{}
-					slog.Debug(fmt.Sprintf("sending a Batch of %d on timeout to topic %s", topic.batch.Len(), topic.arnOrUrl))
+					topic.mux.Lock()
+					s := topic.batch.String()
+					topic.batch.Reset()
+					topic.mux.Unlock()
 
-					// make it a go routine to unblock top level select
-					// even tho we spawn only one go routine, we limit concurrency b/c we are in the loop
-					WG.Add(1)
-					go func() {
-						defer func() {
-							<-topic.concurrency
-						}()
-						defer WG.Done()
+					if len(s) > 0 { // sanity check:
+						topic.concurrency <- struct{}{}
 
-						s := topic.batch.String()
-						err := topic.send(s)
+						slog.Debug(fmt.Sprintf("sending a Batch of %d on timeout to topic %s", len(s), topic.arnOrUrl))
 
-						topic.mux.Lock()
-						defer topic.mux.Unlock()
+						// make it a go routine to unblock top level select
+						// even tho we spawn only one go routine, we limit concurrency b/c we are in the loop
+						WG.Add(1)
+						go func(payload string) {
+							defer func() {
+								<-topic.concurrency
+							}()
+							defer WG.Done()
 
-						if err != nil {
-							topic.resend = append(topic.resend, s)
-						}
-						topic.batch.Reset()
+							err := topic.send(payload)
 
-						if len(topic.overflow) > 0 {
-							topic.earliest = topic.overflow[0].placed
+							topic.mux.Lock()
+							defer topic.mux.Unlock()
 
-							j := 0
-							for i, o := range topic.overflow {
-								j = i
-								topic.batch.Write([]byte(encode(o.payload)))
-								if i < len(topic.overflow)-1 && topic.batch.Len()+len(encode(topic.overflow[i+1].payload)) > MAX_MSG_LENGTH {
-									break
+							if err != nil {
+								topic.resend = append(topic.resend, s)
+							}
+
+							if len(topic.overflow) > 0 {
+								topic.earliest = topic.overflow[0].placed
+
+								j := 0
+								for i, o := range topic.overflow {
+									j = i
+									topic.batch.Write([]byte(encode(o.payload)))
+									if i < len(topic.overflow)-1 && topic.batch.Len()+len(encode(topic.overflow[i+1].payload)) > MAX_MSG_LENGTH {
+										break
+									}
+								}
+								if j < len(topic.overflow)-1 {
+									copy(topic.overflow[0:], topic.overflow[j+1:])
+									topic.overflow = topic.overflow[:len(topic.overflow)-j]
+								} else {
+									topic.overflow = make([]msg, 0, 128)
 								}
 							}
-							if j < len(topic.overflow)-1 {
-								copy(topic.overflow[0:], topic.overflow[j+1:])
-								topic.overflow = topic.overflow[:len(topic.overflow)-j]
-							} else {
-								topic.overflow = make([]msg, 0, 128)
-							}
-						}
-					}()
+						}(s)
+					}
 				}
 			}
 		}

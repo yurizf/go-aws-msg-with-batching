@@ -121,6 +121,7 @@ func main() {
 	ch <- "POISON_PILL"
 	time.Sleep(60 * time.Second)
 	close(ch)
+
 	batching.WG.Wait()
 
 	fmt.Println(fmt.Sprintf("length of debug array is %d", len(batching.Debug.Debug)))
