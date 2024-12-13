@@ -1,6 +1,7 @@
 package batching
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -9,6 +10,8 @@ import (
 	"github.com/aws/aws-sdk-go/service/sqs"
 	"github.com/yurizf/go-aws-msg-with-batching/awsinterfaces"
 	"log/slog"
+	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -121,7 +124,9 @@ func (ctl *Topic) send(payload string) error {
 		}
 
 		slog.Debug(fmt.Sprintf("sending message of %d bytes to sns %s", len(payload), ctl.arnOrUrl))
-		fmt.Println("payload", len(payload))
+		Debug.Mux.Lock()
+		defer Debug.Mux.Unlock()
+		Debug.Debug = append(Debug.Debug, fmt.Sprintf("%s: %d batchLen: %d resendLen: %d overflowLen: %d", time.Now(), getGOID(), ctl.batch.Len(), len(ctl.resend), len(ctl.overflow)))
 
 		for i := 0; i < 3; i++ {
 			_, err = ctl.snsClient.PublishWithContext(ctx, params)
@@ -194,6 +199,9 @@ func NewTopic(topicARN string, p any, timeout time.Duration, concurrency ...int)
 	topic.batcherCtx, topic.batcherCancelFunc = context.WithCancel(context.Background())
 
 	// this go routine is the sending engine for this topic
+	// So, if the topic is used by multiple threads, only one instance of this routine runs.
+	// if each thread created own topic for this arn/url, they won't collide.
+	// either way it works
 	go func() {
 		for {
 			select {
@@ -215,6 +223,7 @@ func NewTopic(topicARN string, p any, timeout time.Duration, concurrency ...int)
 							<-topic.concurrency
 						}()
 
+						slog.Debug(fmt.Sprintf("resending failed %d bytes to %s", len(s), topic.arnOrUrl))
 						if err := topic.send(s); err != nil {
 							topic.mux.Lock()
 							tmp = append(tmp, s)
@@ -223,12 +232,14 @@ func NewTopic(topicARN string, p any, timeout time.Duration, concurrency ...int)
 					}(v)
 				}
 				topic.resend = tmp
+				slog.Debug(fmt.Sprintf("updated resend list is of length %d for %s", len(topic.resend), topic.arnOrUrl))
 
 				if topic.batch.Len() > 0 && time.Now().Sub(topic.earliest) > topic.timeout {
 					topic.concurrency <- struct{}{}
 					slog.Debug(fmt.Sprintf("sending a Batch of %d on timeout to topic %s", topic.batch.Len(), topic.arnOrUrl))
 
 					// make it a go routine to unblock top level select
+					// even tho we spawn only one go routine, we limit concurrency b/c we are in the loop
 					go func() {
 						defer func() {
 							<-topic.concurrency
@@ -294,4 +305,24 @@ func (ctl *Topic) ShutDown(ctx context.Context) error {
 			time.Sleep(1 * time.Second)
 		}
 	}
+}
+
+var Debug = struct {
+	Mux   sync.Mutex
+	Debug []string
+}{
+	Debug: make([]string, 0, 10000),
+}
+
+func ExtractGID(s []byte) int64 {
+	s = s[len("goroutine "):]
+	s = s[:bytes.IndexByte(s, ' ')]
+	gid, _ := strconv.ParseInt(string(s), 10, 64)
+	return gid
+}
+
+// Parse the goid from runtime.Stack() output. Slow, but it works.
+func getGOID() int64 {
+	var buf [64]byte
+	return ExtractGID(buf[:runtime.Stack(buf[:], false)])
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/yurizf/go-aws-msg-with-batching/batching"
 	"github.com/yurizf/go-aws-msg-with-batching/sns"
 	"log/slog"
 	"math/rand"
@@ -118,5 +119,8 @@ func main() {
 	ch <- "POISON_PILL"
 
 	close(ch)
+	for _, v := range batching.Debug.Debug {
+		fmt.Println(v)
+	}
 
 }
