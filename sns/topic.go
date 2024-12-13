@@ -217,7 +217,7 @@ func (w *MessageWriter) Close() error {
 
 	if w.batchTopic != nil {
 		w.batchTopic.SetAttributes(params.MessageAttributes)
-		slog.Debug(fmt.Sprintf("calling Append from %p Close with %d bytes", w, w.buf.Len()))
+		slog.Debug(fmt.Sprintf("calling Append from %p Close with %d : %d bytes", w, w.buf.Len(), len(w.buf.String())))
 		return w.batchTopic.Append(w.buf.String())
 	}
 
