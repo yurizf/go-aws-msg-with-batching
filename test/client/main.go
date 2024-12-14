@@ -3,13 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/yurizf/go-aws-msg-with-batching/batching"
 	"github.com/yurizf/go-aws-msg-with-batching/sns"
 	"log/slog"
 	"math/rand"
 	"os"
 	"runtime"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -72,10 +72,11 @@ func main() {
 	}
 
 	ch := make(chan string)
+	var wg sync.WaitGroup
 	for i := 0; i < config.numberOfGoRoutines; i = i + 1 {
-		batching.WG.Add(1)
+		wg.Add(1)
 		go func() {
-			defer batching.WG.Done()
+			defer wg.Done()
 			topic, shutdownFunc, err := sns.NewBatchedTopic(config.topic_arn)
 			if err != nil {
 				slog.Error("Error creating topic %s: %s", config.topic_arn, err)
@@ -89,7 +90,7 @@ func main() {
 				select {
 				case msg, ok := <-ch:
 					if !ok {
-						slog.Info("Channel is closed. Shutting down...")
+						slog.Info("Channel is closed. Shutting down the topic...")
 						ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 						defer cancel()
 						shutdownFunc(ctx)
@@ -128,14 +129,8 @@ func main() {
 
 	fmt.Println("closing the message feeding chan.....")
 	close(ch)
-	time.Sleep(30 * time.Second)
+	wg.Wait()
 
-	fmt.Printf("after closing channel and waiting for 30 secs, the number of go routine is %d", runtime.NumGoroutine())
-	batching.WG.Wait()
+	fmt.Printf("after closing channel and waiting for 30 secs, the number of go routines should be zero. it is %d", runtime.NumGoroutine())
 
-	fmt.Println(fmt.Sprintf("length of debug array is %d", len(batching.Debug.Debug)))
-	for _, v := range batching.Debug.Debug {
-		fmt.Println(v)
-	}
-	fmt.Println("Finishing...")
 }

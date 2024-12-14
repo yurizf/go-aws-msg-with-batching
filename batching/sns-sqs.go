@@ -1,7 +1,6 @@
 package batching
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -10,8 +9,6 @@ import (
 	"github.com/aws/aws-sdk-go/service/sqs"
 	"github.com/yurizf/go-aws-msg-with-batching/awsinterfaces"
 	"log/slog"
-	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -30,7 +27,19 @@ func (m msg) byteLen() int {
 	return batchLen([]string{m.payload})
 }
 
-// &{false {0 0} <nil> map[] map[] map[] map[] <nil>}
+type HighWaterMark struct {
+	TimeStamp time.Time
+	Number    int
+	Length    int64
+}
+
+type Stats struct {
+	Batch       HighWaterMark
+	Overflow    HighWaterMark
+	Resend      HighWaterMark
+	TotalLength int64
+	TotalMsg    int64
+}
 type Topic struct {
 	queueType     string
 	arnOrUrl      string
@@ -53,90 +62,90 @@ type Topic struct {
 
 	batcherCtx        context.Context    // context used to Topic the life of batcher engine
 	batcherCancelFunc context.CancelFunc // CancelFunc for all receiver routines
-}
 
-var ctl Topic
+	wg sync.WaitGroup
+
+	statsMux sync.Mutex
+	stats    Stats
+}
 
 // SetTopicTimeout - updates the timeout used to fire batched messages for a topic
 // NewTopic should have been called for the topic prior to this call
-func (ctl *Topic) SetTopicTimeout(timeout time.Duration) {
-	ctl.timeout = timeout
+func (t *Topic) SetTopicTimeout(timeout time.Duration) {
+	t.timeout = timeout
 }
 
 // SetAttributes - sets a single attributes set for ALL queued msgs of a topic.
 // NewTopic should have been called for the topic prior to this call
-func (ctl *Topic) SetAttributes(attrs any) {
+func (t *Topic) SetAttributes(attrs any) {
 
-	ctl.mux.Lock()
-	defer ctl.mux.Unlock()
+	t.mux.Lock()
+	defer t.mux.Unlock()
 
 	switch attrs.(type) {
 	case map[string]*sns.MessageAttributeValue:
-		ctl.snsAttributes = attrs.(map[string]*sns.MessageAttributeValue)
+		t.snsAttributes = attrs.(map[string]*sns.MessageAttributeValue)
 	case map[string]*sqs.MessageAttributeValue:
-		ctl.sqsAttributes = attrs.(map[string]*sqs.MessageAttributeValue)
+		t.sqsAttributes = attrs.(map[string]*sqs.MessageAttributeValue)
 	}
 }
 
 // Append - batch analogue of "send". Adds the payload to the current batch
-func (ctl *Topic) Append(payload string) error {
+func (t *Topic) Append(payload string) error {
 	if len(payload) > MAX_MSG_LENGTH {
 		return fmt.Errorf("message is too long: %d", len(payload))
 	}
 
 	p := prefixWithLength(payload)
 
-	slog.Debug(fmt.Sprintf("appending %d to %d", len(p), ctl.batch.Len()))
+	slog.Debug(fmt.Sprintf("appending %d to %d", len(p), t.batch.Len()))
 
-	ctl.mux.Lock()
-	defer ctl.mux.Unlock()
-	if ctl.batch.Len()+len(p) > MAX_MSG_LENGTH {
-		// slog.Debug(fmt.Sprintf("reached max SNS msg size, sending %d bytes", ctl.batch.Len()))
+	t.mux.Lock()
+	defer t.mux.Unlock()
+	if t.batch.Len()+len(p) > MAX_MSG_LENGTH {
+		// slog.Debug(fmt.Sprintf("reached max SNS msg size, sending %d bytes", t.batch.Len()))
 
-		ctl.overflow = append(ctl.overflow, msg{time.Now(), p})
+		t.overflow = append(t.overflow, msg{time.Now(), p})
 		// don't send from here. It's cleaner to send from one place: engine
 		return nil
 	}
 
-	if ctl.batch.Len() == 0 {
-		ctl.earliest = time.Now()
+	if t.batch.Len() == 0 {
+		t.earliest = time.Now()
 	}
 
-	_, err := ctl.batch.WriteString(p)
-	ctl.number++
+	_, err := t.batch.WriteString(p)
+	t.number++
 
 	return err
 }
 
-func (ctl *Topic) send(payload string) error {
-	ctx, cancel := context.WithTimeout(ctl.batcherCtx, 500*time.Millisecond)
+func (t *Topic) send(payload string) error {
+	ctx, cancel := context.WithTimeout(t.batcherCtx, 500*time.Millisecond)
 	defer cancel()
 
 	var err error = nil
-	switch ctl.queueType {
+	switch t.queueType {
 	case SNS:
 		params := &sns.PublishInput{
 			Message:  aws.String(payload),
-			TopicArn: aws.String(ctl.arnOrUrl),
+			TopicArn: aws.String(t.arnOrUrl),
 		}
 
-		if len(ctl.snsAttributes) > 0 {
-			params.MessageAttributes = ctl.snsAttributes
+		if len(t.snsAttributes) > 0 {
+			params.MessageAttributes = t.snsAttributes
 		}
 
-		slog.Debug(fmt.Sprintf("in send func: sending message of %d bytes to sns %s", len(payload), ctl.arnOrUrl))
-		Debug.Mux.Lock()
-		Debug.Debug = append(Debug.Debug, fmt.Sprintf("%s: %d batchLen: %d resendLen: %d overflowLen: %d", time.Now(), getGOID(), len(payload), len(ctl.resend), len(ctl.overflow)))
-		Debug.Mux.Unlock()
+		slog.Debug(fmt.Sprintf("in send func: sending message of %d bytes to sns %s", len(payload), t.arnOrUrl))
 
 		for i := 0; i < 3; i++ {
-			_, err = ctl.snsClient.PublishWithContext(ctx, params)
+			_, err = t.snsClient.PublishWithContext(ctx, params)
 			// debugging locally err := fmt.Errorf("fake")
 			// fmt.Printf("*************** Fake SNS sending of %d bytes", len(*params.Message))
 			// err = nil
 
 			if err != nil {
-				slog.Error(fmt.Sprintf("error sending message of %d bytes to sns %s: %s", len(payload), ctl.arnOrUrl, err.Error()))
+				slog.Error(fmt.Sprintf("error sending message of %d bytes to sns %s: %s", len(payload), t.arnOrUrl, err.Error()))
 				time.Sleep(time.Duration(int64((i+1)*100) * int64(time.Millisecond)))
 				continue
 			}
@@ -145,18 +154,18 @@ func (ctl *Topic) send(payload string) error {
 	case SQS:
 		params := &sqs.SendMessageInput{
 			MessageBody: aws.String(payload),
-			QueueUrl:    aws.String(ctl.arnOrUrl),
+			QueueUrl:    aws.String(t.arnOrUrl),
 		}
 
-		if len(ctl.sqsAttributes) > 0 {
-			params.MessageAttributes = ctl.sqsAttributes
+		if len(t.sqsAttributes) > 0 {
+			params.MessageAttributes = t.sqsAttributes
 		}
 
-		slog.Debug(fmt.Sprintf("sending message of %d bytes to sqs %s", len(payload), ctl.arnOrUrl))
+		slog.Debug(fmt.Sprintf("sending message of %d bytes to sqs %s", len(payload), t.arnOrUrl))
 		for i := 0; i < 3; i++ {
-			_, err = ctl.sqsClient.SendMessageWithContext(ctx, params)
+			_, err = t.sqsClient.SendMessageWithContext(ctx, params)
 			if err != nil {
-				slog.Error(fmt.Sprintf("error sending message of %d bytes to sqs %s: %s", len(payload), ctl.arnOrUrl, err.Error()))
+				slog.Error(fmt.Sprintf("error sending message of %d bytes to sqs %s: %s", len(payload), t.arnOrUrl, err.Error()))
 				time.Sleep(time.Duration(int64((i+1)*100) * int64(time.Millisecond)))
 				continue
 			}
@@ -207,13 +216,13 @@ func NewTopic(topicARN string, p any, timeout time.Duration, concurrency ...int)
 	// So, if the topic is used by multiple threads, only one instance of this routine runs.
 	// if each thread created own topic for this arn/url, they won't collide.
 	// either way it works
-	WG.Add(1)
+	topic.wg.Add(1)
 	go func() {
-		defer WG.Done()
+		defer topic.wg.Done()
 		for {
 			select {
 			case <-topic.batcherCtx.Done():
-				slog.Info("batcher is shutting down...")
+				slog.Info("topic's batching engine is shutting down...")
 
 				close(topic.concurrency)
 				return
@@ -221,32 +230,53 @@ func NewTopic(topicARN string, p any, timeout time.Duration, concurrency ...int)
 			case <-time.After(100 * time.Millisecond):
 
 				// first, resend failed on send msgs
-				tmp := make([]string, 0, 128)
-				for _, v := range topic.resend {
-					// concurrency limit how many threads will hit SNS/SQS endpoint simultaneously
-					topic.concurrency <- struct{}{}
+				if len(topic.resend) > 0 {
+					collectStats := false
+					if len(topic.resend) > topic.stats.Resend.Number {
+						topic.stats.Resend.Number = len(topic.resend)
+						topic.stats.Resend.TimeStamp = time.Now()
+						collectStats = true
+					}
 
-					WG.Add(1)
-					go func(s string) {
-						defer func() {
-							<-topic.concurrency
-						}()
-						defer WG.Done()
-
-						slog.Debug(fmt.Sprintf("resending failed %d bytes to %s", len(s), topic.arnOrUrl))
-						if err := topic.send(s); err != nil {
-							topic.mux.Lock()
-							tmp = append(tmp, s)
-							topic.mux.Unlock()
+					tmp := make([]string, 0, 128)
+					for _, v := range topic.resend {
+						// concurrency limit how many threads will hit SNS/SQS endpoint simultaneously
+						topic.concurrency <- struct{}{}
+						if collectStats {
+							topic.stats.Resend.Length = topic.stats.Resend.Length + int64(len(v))
 						}
-					}(v)
+
+						topic.wg.Add(1)
+						go func(s string) {
+							defer func() {
+								<-topic.concurrency
+							}()
+							defer topic.wg.Done()
+
+							slog.Debug(fmt.Sprintf("resending failed %d bytes to %s", len(s), topic.arnOrUrl))
+							if err := topic.send(s); err != nil {
+								topic.mux.Lock()
+								tmp = append(tmp, s)
+								topic.mux.Unlock()
+							}
+						}(v)
+					}
+					topic.resend = tmp
 				}
-				topic.resend = tmp
 
 				if topic.batch.Len() > 0 && time.Now().Sub(topic.earliest) > topic.timeout {
+					if topic.stats.Batch.Length < int64(topic.batch.Len()) || topic.stats.Batch.Number < topic.number {
+						topic.stats.Batch.Length = int64(topic.batch.Len())
+						topic.stats.Batch.Number = topic.number
+					}
+
 					topic.mux.Lock()
 					s := topic.batch.String()
 					topic.batch.Reset()
+
+					topic.stats.TotalLength = topic.stats.TotalLength + int64(len(s))
+					topic.stats.TotalMsg = topic.stats.TotalMsg + int64(topic.number)
+
 					topic.number = 0
 					topic.mux.Unlock()
 
@@ -256,12 +286,12 @@ func NewTopic(topicARN string, p any, timeout time.Duration, concurrency ...int)
 
 					// make it a go routine to unblock top level select
 					// even tho we spawn only one go routine, we limit concurrency b/c we are in the loop
-					WG.Add(1)
+					topic.wg.Add(1)
 					go func(payload string) {
 						defer func() {
 							<-topic.concurrency
 						}()
-						defer WG.Done()
+						defer topic.wg.Done()
 
 						err := topic.send(payload)
 
@@ -273,6 +303,11 @@ func NewTopic(topicARN string, p any, timeout time.Duration, concurrency ...int)
 						}
 
 						if len(topic.overflow) > 0 {
+							if len(topic.overflow) > topic.stats.Overflow.Number {
+								topic.stats.Overflow.Number = len(topic.overflow)
+								topic.stats.Overflow.TimeStamp = time.Now()
+							}
+
 							topic.earliest = topic.overflow[0].placed
 
 							j := 0
@@ -303,44 +338,32 @@ func NewTopic(topicARN string, p any, timeout time.Duration, concurrency ...int)
 // by calling cancel on the batcher context.
 // It expects a context with a timeout to be passed to delay the shutdown
 // so that all already accumulated messages could be sent.
-func (ctl *Topic) ShutDown(ctx context.Context) error {
+func (t *Topic) ShutDown(ctx context.Context) error {
 	if ctx == nil {
 		panic("context not set in shutdown batcher")
 	}
-	slog.Info("shutting down batcher...")
+	deadline, ok := ctx.Deadline()
+	if ok {
+		slog.Info(fmt.Sprintf("shutting down topic's batcher...deadline %s", deadline))
+	} else {
+		slog.Info("shutting down topic's batcher...")
+	}
+
+	t.mux.Lock()
+	slog.Info("Topic Statistics", "stats", t.stats)
+	t.mux.Unlock()
 
 	for {
 		select {
 		case <-ctx.Done():
-			ctl.batcherCancelFunc()
+			t.batcherCancelFunc()
 			ticker := time.NewTicker(10 * time.Second)
 			defer ticker.Stop()
-
+			slog.Info("waiting for go routines to finish....")
+			t.wg.Wait()
 			return ctx.Err()
 		default:
 			time.Sleep(1 * time.Second)
 		}
 	}
-}
-
-var WG sync.WaitGroup
-
-var Debug = struct {
-	Mux   sync.Mutex
-	Debug []string
-}{
-	Debug: make([]string, 0, 10000),
-}
-
-func extractGID(s []byte) int64 {
-	s = s[len("goroutine "):]
-	s = s[:bytes.IndexByte(s, ' ')]
-	gid, _ := strconv.ParseInt(string(s), 10, 64)
-	return gid
-}
-
-// Parse the goid from runtime.Stack() output. Slow, but it works.
-func getGOID() int64 {
-	var buf [64]byte
-	return extractGID(buf[:runtime.Stack(buf[:], false)])
 }

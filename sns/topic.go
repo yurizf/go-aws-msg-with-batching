@@ -33,8 +33,6 @@ type Topic struct {
 	batchTopic *batching.Topic
 }
 
-var toBatch bool
-
 func getConf(t *Topic) (*aws.Config, error) {
 	svc, ok := t.Svc.(*sns.SNS)
 	if !ok {
@@ -154,7 +152,7 @@ func NewUnencodedBatchedTopic(topicARN string, opts ...Option) (msg.Topic, func(
 		return t, tt.batchTopic.ShutDown, err
 	}
 
-	return t, nil, err
+	return t, func(ctx context.Context) error { return nil }, err
 }
 
 // NewWriter returns a sns.MessageWriter instance for writing to
