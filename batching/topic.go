@@ -39,7 +39,9 @@ type Stats struct {
 	Resend      HighWaterMark
 	TotalLength int64
 	TotalMsg    int64
+	Errors      int64
 }
+
 type Topic struct {
 	queueType     string
 	arnOrUrl      string
@@ -146,6 +148,7 @@ func (t *Topic) send(payload string) error {
 
 			if err != nil {
 				slog.Error(fmt.Sprintf("error sending message of %d bytes to sns %s: %s", len(payload), t.arnOrUrl, err.Error()))
+				t.stats.Errors++
 				time.Sleep(time.Duration(int64((i+1)*100) * int64(time.Millisecond)))
 				continue
 			}
@@ -166,6 +169,7 @@ func (t *Topic) send(payload string) error {
 			_, err = t.sqsClient.SendMessageWithContext(ctx, params)
 			if err != nil {
 				slog.Error(fmt.Sprintf("error sending message of %d bytes to sqs %s: %s", len(payload), t.arnOrUrl, err.Error()))
+				t.stats.Errors++
 				time.Sleep(time.Duration(int64((i+1)*100) * int64(time.Millisecond)))
 				continue
 			}
@@ -203,9 +207,11 @@ func NewTopic(topicARN string, p any, timeout time.Duration, concurrency ...int)
 	case awsinterfaces.SNSPublisher:
 		topic.snsClient = v
 		topic.snsAttributes = make(map[string]*sns.MessageAttributeValue)
+		topic.queueType = SNS
 	case awsinterfaces.SQSSender:
 		topic.sqsClient = v
 		topic.sqsAttributes = make(map[string]*sqs.MessageAttributeValue)
+		topic.queueType = SQS
 	default:
 		return nil, errors.New("Invalid client of unexpected type passed")
 	}
@@ -303,6 +309,7 @@ func NewTopic(topicARN string, p any, timeout time.Duration, concurrency ...int)
 						}
 
 						if len(topic.overflow) > 0 {
+
 							if len(topic.overflow) > topic.stats.Overflow.Number {
 								topic.stats.Overflow.Number = len(topic.overflow)
 								topic.stats.Overflow.TimeStamp = time.Now()
@@ -314,10 +321,11 @@ func NewTopic(topicARN string, p any, timeout time.Duration, concurrency ...int)
 							for i, o := range topic.overflow {
 								j = i
 								topic.batch.Write([]byte(prefixWithLength(o.payload)))
-								if i < len(topic.overflow)-1 && topic.batch.Len()+len(prefixWithLength(topic.overflow[i+1].payload)) > MAX_MSG_LENGTH {
+								if i < len(topic.overflow)-1 && topic.batch.Len()+4+len(topic.overflow[i+1].payload) > MAX_MSG_LENGTH {
 									break
 								}
 							}
+							slog.Debug(fmt.Sprintf("copied %d overflow messages into batch", j))
 							if j < len(topic.overflow)-1 {
 								copy(topic.overflow[0:], topic.overflow[j+1:])
 								topic.overflow = topic.overflow[:len(topic.overflow)-j]
