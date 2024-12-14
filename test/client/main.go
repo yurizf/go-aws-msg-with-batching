@@ -41,12 +41,14 @@ func main() {
 	}
 
 	if r := os.Getenv("CONCURRENCY"); r != "" {
-		config.numberOfMessages, _ = strconv.Atoi(r)
+		config.numberOfGoRoutines, _ = strconv.Atoi(r)
 	}
 
 	if r := os.Getenv("TOPIC_ARN"); r != "" {
 		config.topic_arn = r
 	}
+
+	fmt.Println("Configuration", config)
 
 	// https://betterstack.com/community/guides/logging/logging-in-go/
 	if r := os.Getenv("LOG_LEVEL"); r != "" {
@@ -73,7 +75,7 @@ func main() {
 
 	ch := make(chan string)
 	var wg sync.WaitGroup
-	for i := 0; i < config.numberOfGoRoutines; i = i + 1 {
+	for i := 0; i < config.numberOfGoRoutines; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -93,7 +95,9 @@ func main() {
 						slog.Info("Channel is closed. Shutting down the topic...")
 						ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 						defer cancel()
-						shutdownFunc(ctx)
+						if err := shutdownFunc(ctx); err != nil {
+							slog.Error(fmt.Sprintf("error calling shutdown func: %s", err))
+						}
 						return // channel closed
 					}
 
@@ -131,6 +135,6 @@ func main() {
 	close(ch)
 	wg.Wait()
 
-	fmt.Printf("after closing channel and waiting for 30 secs, the number of go routines should be zero. it is %d", runtime.NumGoroutine())
+	fmt.Printf("after closing channel and waiting for 30 secs, the number of go routines should be zero. it is %d\n\n", runtime.NumGoroutine())
 
 }
