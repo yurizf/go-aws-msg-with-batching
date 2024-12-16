@@ -243,9 +243,8 @@ func NewTopic(topicARN string, p any, timeout time.Duration, concurrency ...int)
 		for {
 			select {
 			case <-topic.batcherCtx.Done():
-				slog.Info(topic.uuid + ": topic's batching engine is shutting down...")
 				// by this time we should have nothing queued: deadlines should have taken care of it
-				slog.Info("currently queued payload is " + topic.batch.String())
+				slog.Info(fmt.Sprintf("%s topic's batching engine is shutting down. queued payload length is %d", topic.uuid, topic.batch.Len()))
 
 				close(topic.concurrency)
 				return

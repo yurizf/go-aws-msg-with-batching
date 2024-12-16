@@ -166,7 +166,6 @@ func main() {
 	fmt.Println("closing the message feeding chan.....")
 	close(ch)
 	wg.Wait()
-	pgConn.Close()
 
 	buf := make([]byte, 1<<16)
 	n := runtime.Stack(buf, true)

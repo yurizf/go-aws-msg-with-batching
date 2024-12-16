@@ -25,12 +25,14 @@ func main() {
 	var topic_url string
 	// https://betterstack.com/community/guides/logging/logging-in-go/
 	if r := os.Getenv("TOPIC_URL"); r != "" {
+		log.Printf("TOPIC_URL is %s", r)
 		topic_url = r
 	}
 
 	var db_url string
 	// https://betterstack.com/community/guides/logging/logging-in-go/
 	if r := os.Getenv("DB_URL"); r != "" {
+		log.Printf("DB_URL is %s", r)
 		db_url = r
 	}
 
@@ -82,6 +84,7 @@ func main() {
 			return nil
 		})
 
+	log.Printf("Starting to serve...")
 	err = sqsSrv.Serve(receiverFunc)
 	if !errors.Is(err, msg.ErrServerClosed) {
 		log.Printf("[ERROR] Server closed with an error: %s", err)
@@ -135,7 +138,6 @@ func main() {
 		}
 		log.Printf("[TRACE] %d %s", l, hash)
 	}
-	pgConn.Close()
 
 	log.Printf("[TRACE] SQS read and processed Total unbatched messages: %d, total length: %d", stats.numberMessages, stats.totalLength)
 
