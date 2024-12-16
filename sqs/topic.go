@@ -54,16 +54,19 @@ func NewTopic(queueURL string) (msg.Topic, error) {
 	}, nil
 }
 
-func NewBatchTopic(queueURL string) (msg.Topic, error) {
+func NewBatchTopic(queueURL string) (msg.Topic, string, error) {
+
 	t, err := NewTopic(queueURL)
 	if err != nil {
-		return t, err
+		return t, "", err
 	}
 
 	tt, _ := t.(*Topic)
-	tt.batchTopic, err = batching.NewTopic(queueURL, tt.Svc, 1*time.Second)
+	if tt.batchTopic, err = batching.NewTopic(queueURL, tt.Svc, 1*time.Second); err == nil {
+		return t, tt.batchTopic.UUID, err
+	}
 
-	return t, err
+	return t, "", err
 
 }
 

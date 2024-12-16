@@ -145,14 +145,13 @@ func NewUnencodedTopic(topicARN string, opts ...Option) (msg.Topic, error) {
 func NewUnencodedBatchedTopic(topicARN string, opts ...Option) (msg.Topic, string, func(ctx context.Context) error, error) {
 
 	t, err := NewUnencodedTopic(topicARN, opts...)
-	uuid := "undefined-uuid"
 	if err == nil {
 		tt, _ := t.(*Topic)
-		tt.batchTopic, uuid, err = batching.NewTopic(topicARN, tt.Svc, 2*time.Second)
-		return t, uuid, tt.batchTopic.ShutDown, err
+		tt.batchTopic, err = batching.NewTopic(topicARN, tt.Svc, 2*time.Second)
+		return t, tt.batchTopic.UUID, tt.batchTopic.ShutDown, err
 	}
 
-	return t, uuid, func(ctx context.Context) error { return nil }, err
+	return t, "", func(ctx context.Context) error { return nil }, err
 }
 
 // NewWriter returns a sns.MessageWriter instance for writing to
