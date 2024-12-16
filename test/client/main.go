@@ -91,7 +91,7 @@ func main() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			topic, uuid, shutdownFunc, err := sns.NewBatchedTopic(config.topic_arn)
+			topic, uuid, shutdownFunc, err := sns.NewBatchedTopic(config.topic_arn, true)
 			if err != nil {
 				slog.Error("Error creating topic %s: %s", config.topic_arn, err)
 				return
