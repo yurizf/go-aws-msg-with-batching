@@ -9,11 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"github.com/yurizf/go-aws-msg-with-batching/awsinterfaces"
-	"io"
 	"log"
 	"math/rand"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -182,16 +180,19 @@ func (s *Server) serveBatch(m *sqs.Message, r msg.Receiver) error {
 	s.convertToMsgAttrs(attrs, m.MessageAttributes)
 	// m.Body is likely base64 encoded
 	if attrs.Get("Content-Transfer-Encoding") == "base64" {
-		log.Printf("[TRACE] received base64 encoded batch of length %ds", len(*m.Body))
-		reader := base64.NewDecoder(base64.StdEncoding, strings.NewReader(*m.Body))
-		byteSlice, _ := io.ReadAll(reader)
+		log.Printf("[TRACE] received base64 encoded batch of length %d", len(*m.Body))
+
+		byteSlice, err := base64.StdEncoding.DecodeString(*m.Body)
+		if err != nil {
+			log.Printf("[ERROR] cannot base64 decode batch [%s]: %s\n------------------", err, *m.Body)
+		}
 		body := string(byteSlice)
 		m.Body = &body
 	}
 
 	msgs, err := batching.Debatch(*m.Body)
 	if err != nil {
-		log.Printf("[ERROR] cannot debatch message%s: %s", err, *m.Body)
+		log.Printf("[ERROR] cannot debatch message [%s]: %s\n---------------", err, *m.Body)
 		return err
 	}
 

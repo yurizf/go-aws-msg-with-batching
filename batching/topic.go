@@ -2,6 +2,7 @@ package batching
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"github.com/aws/aws-sdk-go/aws"
@@ -65,9 +66,9 @@ type Topic struct {
 	sqsClient     awsinterfaces.SQSSender
 	sqsAttributes map[string]*sqs.MessageAttributeValue
 
-	batch    strings.Builder
-	earliest time.Time
-	number   int
+	UUENCODE    bool
+	batch       []msg
+	batchString string
 
 	overflow []msg
 
@@ -105,6 +106,34 @@ func (t *Topic) SetAttributes(attrs any) {
 	}
 }
 
+func (t *Topic) tryToAppend(m msg) bool {
+	if t.UUENCODE {
+		// we won't know till we try
+		var sb strings.Builder
+		for i := 0; i < len(t.batch); i++ {
+			sb.WriteString(prefixWithLength(t.batch[i].payload))
+		}
+		sb.WriteString(prefixWithLength(m.payload))
+
+		encoded := base64.StdEncoding.EncodeToString([]byte(sb.String()))
+		if len(encoded) > MAX_MSG_LENGTH {
+			return false
+		}
+
+		t.batch = append(t.batch, m)
+		t.batchString = encoded
+	} else {
+		if 4+len(m.payload)+len(t.batchString) > MAX_MSG_LENGTH {
+			return false
+		}
+
+		t.batch = append(t.batch, m)
+		t.batchString = t.batchString + prefixWithLength(m.payload)
+	}
+
+	return true
+}
+
 // Append - batch analogue of "send". Adds the payload to the current batch
 func (t *Topic) Append(payload string) error {
 	if len(payload) > MAX_MSG_LENGTH {
@@ -112,26 +141,18 @@ func (t *Topic) Append(payload string) error {
 	}
 
 	p := prefixWithLength(payload)
+	m := msg{time.Now(), p}
 
-	slog.Debug(fmt.Sprintf("%s: appending %d to %d", t.UUID, len(p), t.batch.Len()))
+	slog.Debug(fmt.Sprintf("%s: appending payload of %d bytes to %d", t.UUID, len(p), len(t.batch)))
 
 	t.mux.Lock()
 	defer t.mux.Unlock()
-	if t.batch.Len()+len(p) > MAX_MSG_LENGTH {
-		// slog.Debug(fmt.Sprintf("reached max SNS msg size, sending %d bytes", t.batch.Len()))
-		// don't send from here. It's cleaner to send from one place: engine
-		t.overflow = append(t.overflow, msg{time.Now(), p})
-		return nil
+	if !t.tryToAppend(m) {
+		t.overflow = append(t.overflow, m)
 	}
 
-	if t.batch.Len() == 0 {
-		t.earliest = time.Now()
-	}
-
-	_, err := t.batch.WriteString(p)
-	t.number++
-
-	return err
+	// don't send from here. It's cleaner to send from one place: engine
+	return nil
 }
 
 func (t *Topic) send(payload string) error {
@@ -206,6 +227,7 @@ func NewTopic(topicARN string, p any, timeout time.Duration, concurrency ...int)
 		timeout:  timeout,
 		arnOrUrl: topicARN,
 
+		batch:    make([]msg, 0, 128),
 		overflow: make([]msg, 0, 128),
 		resend:   make([]string, 0, 128),
 	}
@@ -244,7 +266,7 @@ func NewTopic(topicARN string, p any, timeout time.Duration, concurrency ...int)
 			select {
 			case <-topic.batcherCtx.Done():
 				// by this time we should have nothing queued: deadlines should have taken care of it
-				slog.Info(fmt.Sprintf("%s topic's batching engine is shutting down. queued payload length is %d", topic.UUID, topic.batch.Len()))
+				slog.Info(fmt.Sprintf("%s topic's batching engine is shutting down. queued payload length is %d", topic.UUID, len(topic.batch)))
 
 				close(topic.concurrency)
 				return
@@ -286,25 +308,21 @@ func NewTopic(topicARN string, p any, timeout time.Duration, concurrency ...int)
 					topic.resend = tmp
 				}
 
-				if topic.batch.Len() > 0 && time.Now().Sub(topic.earliest) > topic.timeout {
-					if topic.stats.Batch.Length < int64(topic.batch.Len()) || topic.stats.Batch.Number < topic.number {
-						topic.stats.Batch.Length = int64(topic.batch.Len())
-						topic.stats.Batch.Number = topic.number
-					}
+				if len(topic.batch) > 0 && time.Now().Sub(topic.batch[0].placed) > topic.timeout {
+					//
 
 					topic.mux.Lock()
-					s := topic.batch.String()
-					topic.batch.Reset()
-
+					s := topic.batchString
+					topic.stats.TotalMsg = topic.stats.TotalMsg + int64(len(topic.batch))
+					topic.batch = make([]msg, 0, 128)
+					topic.batchString = ""
 					topic.stats.TotalLength = topic.stats.TotalLength + int64(len(s))
-					topic.stats.TotalMsg = topic.stats.TotalMsg + int64(topic.number)
 
-					topic.number = 0
 					topic.mux.Unlock()
 
 					topic.concurrency <- struct{}{}
 
-					slog.Debug(fmt.Sprintf("sending a Batch of %d on timeout to topic %s", len(s), topic.arnOrUrl))
+					slog.Debug(fmt.Sprintf("sending a Batch of %d [%s] on timeout to topic %s", len(s), string(s[:20]), topic.arnOrUrl))
 
 					// make it a go routine to unblock top level select
 					// even tho we spawn only one go routine, we limit concurrency b/c we are in the loop
@@ -331,17 +349,16 @@ func NewTopic(topicARN string, p any, timeout time.Duration, concurrency ...int)
 								topic.stats.Overflow.TimeStamp = time.Now()
 							}
 
-							topic.earliest = topic.overflow[0].placed
-
 							j := 0
 							for i, o := range topic.overflow {
-								j = i
-								topic.batch.Write([]byte(prefixWithLength(o.payload)))
-								if i < len(topic.overflow)-1 && topic.batch.Len()+4+len(topic.overflow[i+1].payload) > MAX_MSG_LENGTH {
-									break
+								if topic.tryToAppend(o) {
+									j = i
+									continue
 								}
+								break
 							}
 							slog.Debug(fmt.Sprintf("%s: copied %d overflow messages into batch", topic.UUID, j))
+
 							if j < len(topic.overflow)-1 {
 								copy(topic.overflow[0:], topic.overflow[j+1:])
 								topic.overflow = topic.overflow[:len(topic.overflow)-j]

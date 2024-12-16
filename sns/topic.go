@@ -90,14 +90,6 @@ func NewTopic(topicARN string, opts ...Option) (msg.Topic, error) {
 	return b64.Encoder(topic), nil
 }
 
-func NewBatchedTopic(topicARN string, opts ...Option) (msg.Topic, string, func(ctx context.Context) error, error) {
-	topic, uuid, shutdownFunc, err := NewUnencodedBatchedTopic(topicARN, opts...)
-	if err != nil {
-		return nil, "", nil, err
-	}
-	return b64.Encoder(topic), uuid, shutdownFunc, nil
-}
-
 // NewUnencodedTopic creates an concrete SNS msg.Topic
 //
 // Messages published by the `Topic` returned will not
@@ -142,12 +134,13 @@ func NewUnencodedTopic(topicARN string, opts ...Option) (msg.Topic, error) {
 	return t, err
 }
 
-func NewUnencodedBatchedTopic(topicARN string, opts ...Option) (msg.Topic, string, func(ctx context.Context) error, error) {
+func NewBatchedTopic(topicARN string, uuencode bool, opts ...Option) (msg.Topic, string, func(ctx context.Context) error, error) {
 
 	t, err := NewUnencodedTopic(topicARN, opts...)
 	if err == nil {
 		tt, _ := t.(*Topic)
 		tt.batchTopic, err = batching.NewTopic(topicARN, tt.Svc, 2*time.Second)
+		tt.batchTopic.UUENCODE = uuencode
 		return t, tt.batchTopic.UUID, tt.batchTopic.ShutDown, err
 	}
 
@@ -209,6 +202,11 @@ func (w *MessageWriter) Close() error {
 	}
 
 	if len(*w.Attributes()) > 0 {
+		// for batched  we don use unencoded sns topic. Encoding happens at send time
+		if w.batchTopic != nil && w.batchTopic.UUENCODE {
+			attrs := *w.Attributes()
+			attrs["Content-Transfer-Encoding"] = []string{"base64"}
+		}
 		params.MessageAttributes = buildSNSAttributes(w.Attributes())
 	}
 
