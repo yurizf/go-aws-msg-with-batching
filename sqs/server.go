@@ -4,13 +4,16 @@ import (
 	"bytes"
 	"context"
 	crand "crypto/rand"
+	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"github.com/yurizf/go-aws-msg-with-batching/awsinterfaces"
+	"io"
 	"log"
 	"math/rand"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -174,6 +177,18 @@ func (s *Server) Serve(r msg.Receiver) error {
 
 func (s *Server) serveBatch(m *sqs.Message, r msg.Receiver) error {
 
+	attrs := msg.Attributes{}
+	s.convertToAttrs(attrs, m.Attributes)
+	s.convertToMsgAttrs(attrs, m.MessageAttributes)
+	// m.Body is likely base64 encoded
+	if attrs.Get("Content-Transfer-Encoding") == "base64" {
+		log.Printf("[TRACE] received base64 encoded batch of length %ds", len(*m.Body))
+		reader := base64.NewDecoder(base64.StdEncoding, strings.NewReader(*m.Body))
+		byteSlice, _ := io.ReadAll(reader)
+		body := string(byteSlice)
+		m.Body = &body
+	}
+
 	msgs, err := batching.Debatch(*m.Body)
 	if err != nil {
 		log.Printf("[ERROR] cannot debatch message%s: %s", err, *m.Body)
@@ -191,10 +206,6 @@ func (s *Server) serveBatch(m *sqs.Message, r msg.Receiver) error {
 	if err != nil {
 		log.Printf("[ERROR] Delete message: %s", err.Error())
 	}
-
-	attrs := msg.Attributes{}
-	s.convertToAttrs(attrs, m.Attributes)
-	s.convertToMsgAttrs(attrs, m.MessageAttributes)
 
 	for ok := true; ok; ok = len(msgs) > 0 {
 		select {
