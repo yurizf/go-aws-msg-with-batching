@@ -78,11 +78,11 @@ func main() {
 
 			if str == "POISON_PILL" {
 				log.Printf("[TRACE] received POISON_PILL. Shutting down the server")
-				// give it enough time to drain SQS queue
-				cntx, cancel := context.WithTimeout(ctx, time.Duration(30*time.Second))
+				// give it enough time to drain SQS queue: ShutDown turns off SQS reads immediately and give time to receivers to work through what they have
+				time.Sleep(30 * time.Second)
+				cntx, cancel := context.WithTimeout(ctx, time.Duration(5*time.Second))
 				defer cancel()
-
-				sqsSrv.Shutdown(cntx) // we are done.
+				sqsSrv.Shutdown(cntx)
 				return nil
 			}
 
