@@ -12,6 +12,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"runtime"
 	"sync"
 	"time"
 )
@@ -45,7 +46,7 @@ func main() {
 
 	sqsSrv, err := sqs.NewBatchedServer(topic_url, 10, int64(30))
 	if err != nil {
-		log.Printf(fmt.Sprintf("[ERROR]] creating Server: %s", err))
+		log.Printf(fmt.Sprintf("[ERROR] creating Server: %s", err))
 		return
 	}
 
@@ -77,10 +78,11 @@ func main() {
 
 			if str == "POISON_PILL" {
 				log.Printf("[TRACE] received POISON_PILL. Shutting down the server")
-				cntx, cancel := context.WithTimeout(ctx, time.Duration(5*time.Second))
+				// give it enough time to drain SQS queue
+				cntx, cancel := context.WithTimeout(ctx, time.Duration(30*time.Second))
 				defer cancel()
 
-				sqsSrv.Shutdown(cntx) // we are done. Cancel the top context we got here from the closure.
+				sqsSrv.Shutdown(cntx) // we are done.
 				return nil
 			}
 
@@ -145,5 +147,10 @@ func main() {
 	}
 
 	log.Printf("[TRACE] SQS read and processed Total unbatched messages: %d, total length: %d", stats.numberMessages, stats.totalLength)
+
+	buf := make([]byte, 1<<16)
+	n := runtime.Stack(buf, true)
+	fmt.Printf("after closing channel and waiting for 30 secs, the number of go routines should be zero. it is: %d\n", runtime.NumGoroutine())
+	fmt.Println(string(buf[:n]))
 
 }
