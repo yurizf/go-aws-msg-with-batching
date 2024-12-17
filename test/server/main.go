@@ -101,13 +101,12 @@ func main() {
 
 	sqls := []string{"SELECT COUNT(1) FROM client",
 		"SELECT COUNT(1) FROM server",
-		`
-		SELECT client.l, client.md5
-		FROM client
-		EXCEPT    
-		SELECT server.l,server.md5
-        FROM server
-	`}
+
+		`SELECT client.l, client.md5
+		 FROM client
+		 EXCEPT    
+		 SELECT server.l,server.md5
+         FROM server`}
 
 	var cnt int
 

@@ -197,7 +197,7 @@ func (s *Server) serveBatch(m *sqs.Message, r msg.Receiver) error {
 		return err
 	}
 
-	log.Printf("[TRACE] Unpacked %d messages from the batch: %s", len(msgs), msgs[0][:10])
+	log.Printf("[TRACE] Unpacked %d messages from the batch", len(msgs))
 
 	// delete batch from SQS right away
 	_, err = s.Svc.DeleteMessage(&sqs.DeleteMessageInput{

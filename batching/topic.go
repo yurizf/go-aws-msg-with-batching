@@ -141,10 +141,8 @@ func (t *Topic) Append(payload string) error {
 		return fmt.Errorf("message is too long: %d", len(payload))
 	}
 
-	p := prefixWithLength(payload)
-	m := msg{time.Now(), p}
-
-	slog.Debug(fmt.Sprintf("%s: appending payload of %d bytes to %d", t.UUID, len(p), len(t.batch)))
+	m := msg{time.Now(), payload}
+	slog.Debug(fmt.Sprintf("%s: appending payload of %d bytes to %d", t.UUID, len(payload), len(t.batch)))
 
 	t.mux.Lock()
 	defer t.mux.Unlock()
