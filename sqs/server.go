@@ -178,6 +178,7 @@ func (s *Server) serveBatch(m *sqs.Message, r msg.Receiver) error {
 	attrs := msg.Attributes{}
 	s.convertToAttrs(attrs, m.Attributes)
 	s.convertToMsgAttrs(attrs, m.MessageAttributes)
+
 	// m.Body is likely base64 encoded
 	if attrs.Get("Content-Transfer-Encoding") == "base64" {
 		log.Printf("[TRACE] received base64 encoded batch of length %d", len(*m.Body))
@@ -196,7 +197,7 @@ func (s *Server) serveBatch(m *sqs.Message, r msg.Receiver) error {
 		return err
 	}
 
-	log.Printf("[TRACE] Unpacked %d messages from the batch", len(msgs))
+	log.Printf("[TRACE] Unpacked %d messages from the batch: %s", len(msgs), msgs[0][:10])
 
 	// delete batch from SQS right away
 	_, err = s.Svc.DeleteMessage(&sqs.DeleteMessageInput{

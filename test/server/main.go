@@ -21,6 +21,13 @@ func MD5(text string) string {
 	return hex.EncodeToString(hash[:])
 }
 
+func substr(s string) string {
+	if len(s) > 20 {
+		return s[:20]
+	}
+	return s
+}
+
 func main() {
 	var topic_url string
 	// https://betterstack.com/community/guides/logging/logging-in-go/
@@ -62,7 +69,12 @@ func main() {
 		func(ctx context.Context, m *msg.Message) error {
 			data, _ := io.ReadAll(m.Body)
 			str := string(data)
-			log.Printf("[TRACE] receiver obtained msg of %d bytes: %s", len(str), str[:20])
+			log.Printf("[TRACE] receiver obtained msg of %d bytes: %s", len(str), substr(str))
+			_, err := pgConn.Exec(dbCtx, insertSQL, len(str), MD5(str), str)
+			if err != nil {
+				log.Printf(fmt.Sprintf("[ERROR] writing %d bytes to the database: %s", len(str), err))
+			}
+
 			if str == "POISON_PILL" {
 				log.Printf("[TRACE] received POISON_PILL. Shutting down the server")
 				cntx, cancel := context.WithTimeout(ctx, time.Duration(5*time.Second))
@@ -70,11 +82,6 @@ func main() {
 
 				sqsSrv.Shutdown(cntx) // we are done. Cancel the top context from the closure.
 				return nil
-			}
-
-			_, err := pgConn.Exec(dbCtx, insertSQL, len(str), MD5(str), str)
-			if err != nil {
-				log.Printf(fmt.Sprintf("[ERROR] writing %d bytes to the database: %s", len(str), err))
 			}
 
 			stats.mux.Lock()

@@ -72,6 +72,7 @@ type Topic struct {
 
 	overflow []msg
 
+	//batcchStrings that failed to be sent
 	resend []string
 
 	concurrency chan struct{}
