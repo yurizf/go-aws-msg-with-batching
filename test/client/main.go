@@ -68,7 +68,7 @@ func main() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			topic, uuid, shutdownFunc, err := sns.NewBatchedTopic(config.topic_arn, true)
+			topic, id, shutdownFunc, err := sns.NewBatchedTopic(config.topic_arn, true)
 			if err != nil {
 				log.Printf("[ERROR]  creating topic %s: %s", config.topic_arn, err)
 				return
@@ -81,28 +81,28 @@ func main() {
 				select {
 				case msg, ok := <-ch:
 					if !ok {
-						log.Printf("[INFO] in main: Channel is closed. Shutting down the topic " + uuid)
+						log.Printf("[INFO] %s in main: Channel is closed. Shutting down the topic ", id)
 						ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 						defer cancel()
 						if err := shutdownFunc(ctx); err != nil {
-							log.Printf("[ERROR] calling shutdown func: %s", err)
+							log.Printf("[ERROR] %s calling shutdown func: %s", id, err)
 						}
 						return // channel closed
 					}
 
 					w := topic.NewWriter(ctx)
 					if msg == "POISON_PILL" {
-						log.Printf("[INFO] writing POISON_PILL into a topic")
+						log.Printf("[INFO] %s writing POISON_PILL into a topic", id)
 					}
 					w.Attributes().Set("count", fmt.Sprintf("%d", i))
 					_, err := w.Write([]byte(msg))
 					if err != nil {
-						log.Printf("[ERROR] Failed to write %d bytes into the msg writer: %s", len(msg), err)
+						log.Printf("[ERROR] %s Failed to write %d bytes into the msg writer: %s", id, len(msg), err)
 						return
 					}
 					err = w.Close()
 					if err != nil {
-						log.Printf("[ERROR] Failed to close %d bytes msg writer buffer %p: %s", len(msg), w, err)
+						log.Printf("[ERROR] %s Failed to close %d bytes msg writer buffer %p: %s", id, len(msg), w, err)
 						return
 					}
 					//if _, err := io.Copy(w, m.Body); err != nil {
@@ -138,7 +138,7 @@ func main() {
 	_, err = pgConn.Exec(dbCtx, insertSQL, len("POISON_PILL"), MD5("POISON_PILL"), "POISON_PILL")
 
 	// this should be more than enough to send all the batched messages on timeout
-	time.Sleep(60 * time.Second)
+	time.Sleep(30 * time.Second)
 
 	fmt.Println("closing the message feeding chan.....")
 	close(ch)

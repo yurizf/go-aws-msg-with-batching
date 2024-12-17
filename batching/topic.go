@@ -394,7 +394,7 @@ func (t *Topic) ShutDown(ctx context.Context) error {
 			t.batcherCancelFunc()
 			ticker := time.NewTicker(10 * time.Second)
 			defer ticker.Stop()
-			log.Printf("[INFO] waiting for go routines to finish....")
+			log.Printf("[INFO] %s: waiting for go routines to finish....", t.ID)
 			t.wg.Wait()
 			return ctx.Err()
 		default:

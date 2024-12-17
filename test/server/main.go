@@ -73,7 +73,7 @@ func main() {
 			log.Printf("[TRACE] receiver obtained msg of %d bytes: %s", len(str), substr(str))
 			_, err := pgConn.Exec(dbCtx, insertSQL, len(str), MD5(str), str)
 			if err != nil {
-				log.Printf(fmt.Sprintf("[ERROR] writing %d bytes to the database: %s", len(str), err))
+				log.Printf("[ERROR] writing %d bytes to the database: %s", len(str), err)
 			}
 
 			if str == "POISON_PILL" {
