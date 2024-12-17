@@ -7,8 +7,6 @@ import (
 	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/service/sns"
 	aws2 "github.com/yurizf/go-aws-msg-with-batching/awsinterfaces"
-	"log/slog"
-	"os"
 	"testing"
 	"time"
 )
@@ -90,18 +88,13 @@ func Test_SNS(t *testing.T) {
 		},
 	}
 
-	opts := &slog.HandlerOptions{
-		Level: slog.LevelDebug,
-	}
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, opts)))
-
 	//for _, tt := range tests {
 
 	//}
 	tt := tests[0]
 	t.Run(tt.name, func(t *testing.T) {
 
-		slog.Info(tt.name)
+		t.Log(tt.name)
 		topic, err := NewTopic("fake-topic", tt.args.publisher, 1*time.Second)
 		if err != nil {
 			t.Errorf("could not create topic: %s", err)
@@ -127,7 +120,7 @@ func Test_SNS(t *testing.T) {
 
 	tt = tests[1]
 	t.Run(tt.name, func(t *testing.T) {
-		slog.Info(tt.name)
+		t.Log(tt.name)
 
 		topic, err := NewTopic("fake-topic-1", tt.args.publisher, 30*time.Second)
 		if err != nil {
@@ -148,7 +141,7 @@ func Test_SNS(t *testing.T) {
 
 		// wait till the remainder of msgs is sent on timeout reached
 		// time.Sleep(40 * time.Second)
-		slog.Info(tt.name)
+		t.Log(tt.name)
 	})
 
 }

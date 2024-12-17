@@ -54,20 +54,18 @@ func NewTopic(queueURL string) (msg.Topic, error) {
 	}, nil
 }
 
-func NewBatchTopic(queueURL string) (msg.Topic, string, error) {
+func NewBatchedTopic(queueURL string) (msg.Topic, string, func(ctx context.Context) error, error) {
 
 	t, err := NewTopic(queueURL)
-	if err != nil {
-		return t, "", err
+	if err == nil {
+		tt, _ := t.(*Topic)
+		if tt.batchTopic, err = batching.NewTopic(queueURL, tt.Svc, batching.BATCH_TIMEOUT); err == nil {
+			tt.batchTopic.UUENCODE = false
+			return t, tt.batchTopic.ID, tt.batchTopic.ShutDown, err
+		}
 	}
 
-	tt, _ := t.(*Topic)
-	if tt.batchTopic, err = batching.NewTopic(queueURL, tt.Svc, 1*time.Second); err == nil {
-		return t, tt.batchTopic.UUID, err
-	}
-
-	return t, "", err
-
+	return t, "", func(ctx context.Context) error { return nil }, err
 }
 
 // NewWriter returns a new sqs.MessageWriter

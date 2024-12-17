@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/yurizf/go-aws-msg-with-batching/sns"
-	"log/slog"
+	"log"
 	"math/rand"
 	"os"
 	"runtime"
@@ -62,29 +62,6 @@ func main() {
 	}
 	fmt.Println("Configuration", config)
 
-	// https://betterstack.com/community/guides/logging/logging-in-go/
-	if r := os.Getenv("LOG_LEVEL"); r != "" {
-		opts := &slog.HandlerOptions{
-			Level: slog.LevelInfo,
-		}
-		logLevel := r
-		switch logLevel {
-		case "debug":
-			opts = &slog.HandlerOptions{
-				Level: slog.LevelDebug,
-			}
-		case "error":
-			opts = &slog.HandlerOptions{
-				Level: slog.LevelError,
-			}
-		case "warn":
-			opts = &slog.HandlerOptions{
-				Level: slog.LevelWarn,
-			}
-		}
-		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, opts)))
-	}
-
 	ch := make(chan string)
 	var wg sync.WaitGroup
 	for i := 0; i < config.numberOfGoRoutines; i++ {
@@ -93,7 +70,7 @@ func main() {
 			defer wg.Done()
 			topic, uuid, shutdownFunc, err := sns.NewBatchedTopic(config.topic_arn, true)
 			if err != nil {
-				slog.Error("Error creating topic %s: %s", config.topic_arn, err)
+				log.Printf("[ERROR]  creating topic %s: %s", config.topic_arn, err)
 				return
 			}
 
@@ -104,28 +81,28 @@ func main() {
 				select {
 				case msg, ok := <-ch:
 					if !ok {
-						slog.Info("in main: Channel is closed. Shutting down the topic " + uuid)
+						log.Printf("[INFO] in main: Channel is closed. Shutting down the topic " + uuid)
 						ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 						defer cancel()
 						if err := shutdownFunc(ctx); err != nil {
-							slog.Error(fmt.Sprintf("error calling shutdown func: %s", err))
+							log.Printf("[ERROR] calling shutdown func: %s", err)
 						}
 						return // channel closed
 					}
 
 					w := topic.NewWriter(ctx)
 					if msg == "POISON_PILL" {
-						slog.Info("writing POISON_PILL into a topic")
+						log.Printf("[INFO] writing POISON_PILL into a topic")
 					}
 					w.Attributes().Set("count", fmt.Sprintf("%d", i))
 					_, err := w.Write([]byte(msg))
 					if err != nil {
-						slog.Error(fmt.Sprintf("Failed to write %d bytes into the msg writer: %s", len(msg), err))
+						log.Printf("[ERROR] Failed to write %d bytes into the msg writer: %s", len(msg), err)
 						return
 					}
 					err = w.Close()
 					if err != nil {
-						slog.Error(fmt.Sprintf("Failed to close %d bytes msg writer buffer %p: %s", len(msg), w, err))
+						log.Printf("[ERROR] Failed to close %d bytes msg writer buffer %p: %s", len(msg), w, err)
 						return
 					}
 					//if _, err := io.Copy(w, m.Body); err != nil {
@@ -139,7 +116,7 @@ func main() {
 	dbCtx := context.Background()
 	pgConn, err := pgxpool.New(dbCtx, config.db_url)
 	if err != nil {
-		slog.Error(fmt.Sprintf("failed to connect to %s: %s", config.db_url, err))
+		log.Printf("[ERROR] failed to connect to %s: %s", config.db_url, err)
 		return
 	}
 	defer pgConn.Close()
@@ -149,11 +126,11 @@ func main() {
 	for i := 0; i < config.numberOfMessages; i = i + 1 {
 		msg := randString(100, 15000) // message is uuencoded and gets longer
 		msg = fmt.Sprintf("msg %d:%s", i, msg)
-		slog.Info(fmt.Sprintf("generated msg of %d bytes: %s", len(msg), msg[:20]))
+		log.Printf("[TRACE] generated msg of %d bytes: %s", len(msg), msg[:20])
 		ch <- msg
 		_, err := pgConn.Exec(dbCtx, insertSQL, len(msg), MD5(msg), msg)
 		if err != nil {
-			slog.Error(fmt.Sprintf("error writing %d bytes to the database: %s", len(msg), err))
+			log.Printf("[ERROR] writing %d bytes to the database: %s", len(msg), err)
 		}
 	}
 

@@ -139,9 +139,9 @@ func NewBatchedTopic(topicARN string, uuencode bool, opts ...Option) (msg.Topic,
 	t, err := NewUnencodedTopic(topicARN, opts...)
 	if err == nil {
 		tt, _ := t.(*Topic)
-		tt.batchTopic, err = batching.NewTopic(topicARN, tt.Svc, 2*time.Second)
+		tt.batchTopic, err = batching.NewTopic(topicARN, tt.Svc, batching.BATCH_TIMEOUT)
 		tt.batchTopic.UUENCODE = uuencode
-		return t, tt.batchTopic.UUID, tt.batchTopic.ShutDown, err
+		return t, tt.batchTopic.ID, tt.batchTopic.ShutDown, err
 	}
 
 	return t, "", func(ctx context.Context) error { return nil }, err
