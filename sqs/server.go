@@ -181,8 +181,6 @@ func (s *Server) serveBatch(m *sqs.Message, r msg.Receiver) error {
 
 	// m.Body is likely base64 encoded
 	if attrs.Get("Content-Transfer-Encoding") == "base64" {
-		log.Printf("[TRACE] received base64 encoded batch of length %d", len(*m.Body))
-
 		byteSlice, err := base64.StdEncoding.DecodeString(*m.Body)
 		if err != nil {
 			log.Printf("[ERROR] cannot base64 decode batch [%s]: %s\n------------------", err, *m.Body)
@@ -212,8 +210,8 @@ func (s *Server) serveBatch(m *sqs.Message, r msg.Receiver) error {
 	for ok := true; ok; ok = len(msgs) > 0 {
 		select {
 		case <-s.serverCtx.Done():
-			log.Printf("[TRACE] Context is done")
-			close(s.maxConcurrentReceives)
+			log.Printf("[TRACE] serveBatch: Context is done.")
+			// leave s.maxConcurrentReceives chan open. The calling Serve routine will close it.
 			return msg.ErrServerClosed
 
 		default:

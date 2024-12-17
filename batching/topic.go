@@ -320,9 +320,6 @@ func NewTopic(topicARN string, p any, timeout time.Duration, concurrency ...int)
 					topic.mux.Unlock()
 
 					topic.concurrency <- struct{}{}
-
-					slog.Debug(fmt.Sprintf("sending a Batch of %d [%s] on timeout to topic %s", len(s), string(s[:20]), topic.arnOrUrl))
-
 					// make it a go routine to unblock top level select
 					// even tho we spawn only one go routine, we limit concurrency b/c we are in the loop
 					topic.wg.Add(1)

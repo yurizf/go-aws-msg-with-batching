@@ -80,7 +80,7 @@ func main() {
 				cntx, cancel := context.WithTimeout(ctx, time.Duration(5*time.Second))
 				defer cancel()
 
-				sqsSrv.Shutdown(cntx) // we are done. Cancel the top context from the closure.
+				sqsSrv.Shutdown(cntx) // we are done. Cancel the top context we got here from the closure.
 				return nil
 			}
 
@@ -101,7 +101,6 @@ func main() {
 
 	sqls := []string{"SELECT COUNT(1) FROM client",
 		"SELECT COUNT(1) FROM server",
-
 		`SELECT client.l, client.md5
 		 FROM client
 		 EXCEPT    
