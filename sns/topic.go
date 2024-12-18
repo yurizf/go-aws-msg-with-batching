@@ -26,10 +26,9 @@ import (
 
 // Topic configures and manages SNSAPI for sns.MessageWriter.
 type Topic struct {
-	Svc        awsinterfaces.SNSPublisher
-	TopicARN   string
-	session    *session.Session
-	batchTopic *batching.Topic
+	Svc      awsinterfaces.SNSPublisher
+	TopicARN string
+	session  *session.Session
 }
 
 func getConf(t *Topic) (*aws.Config, error) {
@@ -134,27 +133,63 @@ func NewUnencodedTopic(topicARN string, opts ...Option) (msg.Topic, error) {
 	return t, err
 }
 
-func NewBatchedTopic(topicARN string, uuencode bool, opts ...Option) (msg.Topic, string, func(ctx context.Context) error, error) {
+// Topic is an interface where messages are sent in a batched messaging system.
+// It incorporates the generic Topic interface and adds few extra calls
+// Multiple goroutines may invoke method on a Topic simultaneously.
+type BatchedTopic interface {
+	// Topic Interface returned by NewTopic/NewUnencodedTopic
+	msg.Topic
+	ShutDown(ctx context.Context) error
+	ID() string
+}
+
+type BTopic struct {
+	t          *Topic
+	batchTopic *batching.Topic
+}
+
+func NewBatchedTopic(topicARN string, opts ...Option) (BatchedTopic, error) {
 
 	t, err := NewUnencodedTopic(topicARN, opts...)
 	if err == nil {
-		tt, _ := t.(*Topic)
-		tt.batchTopic, err = batching.NewTopic(topicARN, tt.Svc, batching.BATCH_TIMEOUT)
-		tt.batchTopic.UUENCODE = uuencode
-		return t, tt.batchTopic.ID, tt.batchTopic.ShutDown, err
+		bt := &BTopic{}
+		bt.t = t.(*Topic)
+		bt.batchTopic, err = batching.NewTopic(topicARN, bt.t.Svc, batching.BATCH_TIMEOUT)
+		return bt, err
 	}
 
-	return t, "", func(ctx context.Context) error { return nil }, err
+	return nil, err
+}
+
+// Shutdown implements a BatchedTopic interface call
+// that shuts down the batching engine
+func (bt *BTopic) ShutDown(ctx context.Context) error {
+	return bt.batchTopic.ShutDown(ctx)
+}
+
+func (bt *BTopic) ID() string {
+	return bt.batchTopic.ID
 }
 
 // NewWriter returns a sns.MessageWriter instance for writing to
-// the configured SNS batchTopic.
+// the configured SNS Topic.
 func (t *Topic) NewWriter(ctx context.Context) msg.MessageWriter {
 	return &MessageWriter{
 		attributes: make(map[string][]string),
 		snsClient:  t.Svc,
 		topicARN:   t.TopicARN,
-		batchTopic: t.batchTopic,
+		ctx:        ctx,
+	}
+}
+
+// NewWriter returns a sns.MessageWriter instance for writing to
+// the configured SNS batchTopic.
+func (bt *BTopic) NewWriter(ctx context.Context) msg.MessageWriter {
+	return &MessageWriter{
+		attributes: make(map[string][]string),
+		snsClient:  bt.t.Svc,
+		topicARN:   bt.t.TopicARN,
+		batchTopic: bt.batchTopic,
 		ctx:        ctx,
 	}
 }
@@ -202,16 +237,14 @@ func (w *MessageWriter) Close() error {
 	}
 
 	if len(*w.Attributes()) > 0 {
-		// for batched  we don use unencoded sns topic. Encoding happens at send time
-		if w.batchTopic != nil && w.batchTopic.UUENCODE {
-			attrs := *w.Attributes()
-			attrs["Content-Transfer-Encoding"] = []string{"base64"}
-		}
 		params.MessageAttributes = buildSNSAttributes(w.Attributes())
 	}
 
 	if w.batchTopic != nil {
-		w.batchTopic.SetAttributes(params.MessageAttributes)
+		attrs := *w.Attributes()
+		attrs[batching.ENCODING_ATTRIBUTE_KEY] = []string{batching.ENCODING_ATTRIBUTE_VALUE}
+
+		w.batchTopic.SetAttributes(buildSNSAttributes(w.Attributes()))
 		return w.batchTopic.Append(w.buf.String())
 	}
 

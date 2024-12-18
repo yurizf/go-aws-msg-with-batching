@@ -4,11 +4,9 @@ import (
 	"bytes"
 	"context"
 	crand "crypto/rand"
-	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"github.com/yurizf/go-aws-msg-with-batching/awsinterfaces"
 	"log"
 	"math/rand"
 	"os"
@@ -20,6 +18,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/sqs"
+	"github.com/yurizf/go-aws-msg-with-batching/awsinterfaces"
 	"github.com/yurizf/go-aws-msg-with-batching/batching"
 	"github.com/yurizf/go-aws-msg-with-batching/retryer"
 	msg "github.com/zerofox-oss/go-msg"
@@ -63,7 +62,6 @@ type Server struct {
 	serverCtx          context.Context    // context used to control the life of the Server
 	serverCancelFunc   context.CancelFunc // CancelFunc to signal the server should stop requesting messages
 	session            *session.Session   // session used to re-create `Svc` when needed
-	batched            bool
 }
 
 // convertToMsgAttrs creates msg.Attributes from sqs.Message.Attributes.
@@ -113,7 +111,11 @@ func (s *Server) Serve(r msg.Receiver) error {
 					log.Printf("[TRACE] Received SQS Message: %s of %d bytes\n", *m.MessageId, len(*m.Body))
 				}
 
-				if s.batched {
+				attrs := msg.Attributes{}
+				s.convertToAttrs(attrs, m.Attributes)
+				s.convertToMsgAttrs(attrs, m.MessageAttributes)
+
+				if attrs.Get(batching.ENCODING_ATTRIBUTE_KEY) == batching.ENCODING_ATTRIBUTE_VALUE {
 					err = s.serveBatch(m, r)
 					continue
 				}
@@ -179,16 +181,6 @@ func (s *Server) serveBatch(m *sqs.Message, r msg.Receiver) error {
 	s.convertToAttrs(attrs, m.Attributes)
 	s.convertToMsgAttrs(attrs, m.MessageAttributes)
 
-	// m.Body is likely base64 encoded
-	if attrs.Get("Content-Transfer-Encoding") == "base64" {
-		byteSlice, err := base64.StdEncoding.DecodeString(*m.Body)
-		if err != nil {
-			log.Printf("[ERROR] cannot base64 decode batch [%s]: %s\n------------------", err, *m.Body)
-		}
-		body := string(byteSlice)
-		m.Body = &body
-	}
-
 	msgs, err := batching.Debatch(*m.Body)
 	if err != nil {
 		log.Printf("[ERROR] cannot debatch message [%s]: %s\n---------------", err, *m.Body)
@@ -222,6 +214,12 @@ func (s *Server) serveBatch(m *sqs.Message, r msg.Receiver) error {
 				// parallelize like unbatched messages
 				s.maxConcurrentReceives <- struct{}{}
 
+				// payload is partially UUENCODED
+				payload, err = batching.Decode(payload)
+				if err != nil {
+					log.Printf("[ERROR] failed to decode msg %v %v", err, []rune(payload))
+					continue
+				}
 				go func(attrs msg.Attributes, payload string) {
 					defer func() {
 						<-s.maxConcurrentReceives
@@ -364,18 +362,6 @@ func NewServer(queueURL string, cl int, retryTimeout int64, opts ...Option) (msg
 	}
 
 	return srv, nil
-}
-
-func NewBatchedServer(queueURL string, cl int, retryTimeout int64, opts ...Option) (msg.Server, error) {
-	srv, err := NewServer(queueURL, cl, retryTimeout, opts...)
-	if err == nil {
-		ret_p, ok := srv.(*Server)
-		if ok {
-			ret_p.batched = true
-		}
-	}
-
-	return srv, err
 }
 
 func getConf(s *Server) (*aws.Config, error) {

@@ -2,7 +2,6 @@ package batching
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"github.com/aws/aws-sdk-go/aws"
@@ -10,7 +9,6 @@ import (
 	"github.com/aws/aws-sdk-go/service/sqs"
 	"github.com/yurizf/go-aws-msg-with-batching/awsinterfaces"
 	"log"
-	"strings"
 	"sync"
 	"time"
 )
@@ -19,6 +17,9 @@ const MAX_MSG_LENGTH int = 262144
 const SNS = "sns"
 const SQS = "sqs"
 const SEND_TIMEOUT = 3 * time.Second
+
+const ENCODING_ATTRIBUTE_KEY = "Content-Transfer-Encoding"
+const ENCODING_ATTRIBUTE_VALUE = "partially-base64-batch"
 
 // TODO: add a setter and option parsing for this value
 var BATCH_TIMEOUT time.Duration = 2 * time.Second
@@ -66,7 +67,6 @@ type Topic struct {
 	sqsClient     awsinterfaces.SQSSender
 	sqsAttributes map[string]*sqs.MessageAttributeValue
 
-	UUENCODE    bool
 	batch       []msg
 	batchString string
 
@@ -108,30 +108,13 @@ func (t *Topic) SetAttributes(attrs any) {
 }
 
 func (t *Topic) tryToAppend(m msg) bool {
-	if t.UUENCODE {
-		// we won't know till we try
-		var sb strings.Builder
-		for i := 0; i < len(t.batch); i++ {
-			sb.WriteString(prefixWithLength(t.batch[i].payload))
-		}
-		sb.WriteString(prefixWithLength(m.payload))
 
-		encoded := base64.StdEncoding.EncodeToString([]byte(sb.String()))
-		if len(encoded) > MAX_MSG_LENGTH {
-			return false
-		}
-
-		t.batch = append(t.batch, m)
-		t.batchString = encoded
-	} else {
-		if 4+len(m.payload)+len(t.batchString) > MAX_MSG_LENGTH {
-			return false
-		}
-
-		t.batch = append(t.batch, m)
-		t.batchString = t.batchString + prefixWithLength(m.payload)
+	if 4+len(m.payload)+len(t.batchString) > MAX_MSG_LENGTH {
+		return false
 	}
 
+	t.batch = append(t.batch, m)
+	t.batchString = t.batchString + prefixWithLength(m.payload)
 	return true
 }
 
@@ -141,7 +124,8 @@ func (t *Topic) Append(payload string) error {
 		return fmt.Errorf("message is too long: %d", len(payload))
 	}
 
-	m := msg{time.Now(), payload}
+	Encode(payload)
+	m := msg{time.Now(), Encode(payload)}
 	log.Printf("[TRACE] %s: appending payload of %d bytes to %d", t.ID, len(payload), len(t.batch))
 
 	t.mux.Lock()
@@ -169,6 +153,9 @@ func (t *Topic) send(payload string) error {
 
 		if len(t.snsAttributes) > 0 {
 			params.MessageAttributes = t.snsAttributes
+		} else {
+			// sanity check: this should never happen:
+			return errors.New("expected content transfer attribute is missing")
 		}
 
 		log.Printf("[DEBUG] %s: in send func: sending message of %d bytes to sns %s", t.ID, len(payload), t.arnOrUrl)

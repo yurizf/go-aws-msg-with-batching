@@ -44,7 +44,7 @@ func main() {
 		db_url = r
 	}
 
-	sqsSrv, err := sqs.NewBatchedServer(topic_url, 10, int64(30))
+	sqsSrv, err := sqs.NewServer(topic_url, 10, int64(30))
 	if err != nil {
 		log.Printf(fmt.Sprintf("[ERROR] creating Server: %s", err))
 		return

@@ -68,7 +68,7 @@ func main() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			topic, id, shutdownFunc, err := sns.NewBatchedTopic(config.topic_arn, true)
+			topic, err := sns.NewBatchedTopic(config.topic_arn)
 			if err != nil {
 				log.Printf("[ERROR]  creating topic %s: %s", config.topic_arn, err)
 				return
@@ -81,28 +81,28 @@ func main() {
 				select {
 				case msg, ok := <-ch:
 					if !ok {
-						log.Printf("[INFO] %s in main: Channel is closed. Shutting down the topic ", id)
+						log.Printf("[INFO] %s in main: Channel is closed. Shutting down the topic ", topic.ID())
 						ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 						defer cancel()
-						if err := shutdownFunc(ctx); err != nil {
-							log.Printf("[ERROR] %s calling shutdown func: %s", id, err)
+						if err := topic.ShutDown(ctx); err != nil {
+							log.Printf("[ERROR] %s calling shutdown func: %s", topic.ID(), err)
 						}
 						return // channel closed
 					}
 
 					w := topic.NewWriter(ctx)
 					if msg == "POISON_PILL" {
-						log.Printf("[INFO] %s writing POISON_PILL into a topic", id)
+						log.Printf("[INFO] %s writing POISON_PILL into a topic", topic.ID())
 					}
 					w.Attributes().Set("count", fmt.Sprintf("%d", i))
 					_, err := w.Write([]byte(msg))
 					if err != nil {
-						log.Printf("[ERROR] %s Failed to write %d bytes into the msg writer: %s", id, len(msg), err)
+						log.Printf("[ERROR] %s Failed to write %d bytes into the msg writer: %s", topic.ID(), len(msg), err)
 						return
 					}
 					err = w.Close()
 					if err != nil {
-						log.Printf("[ERROR] %s Failed to close %d bytes msg writer buffer %p: %s", id, len(msg), w, err)
+						log.Printf("[ERROR] %s Failed to close %d bytes msg writer buffer %p: %s", topic.ID(), len(msg), w, err)
 						return
 					}
 					//if _, err := io.Copy(w, m.Body); err != nil {
@@ -133,6 +133,16 @@ func main() {
 			log.Printf("[ERROR] writing %d bytes to the database: %s", len(msg), err)
 		}
 	}
+
+	// msg with unicode chars SQS does not support
+	unsupported1 := string(rune(5)) + string(rune(6)) + string(rune(7))
+	unsupported2 := string(rune(0)) + string(rune(1)) + string(rune(3))
+	marker := string(rune(1114111))
+	msg := unsupported2 +
+		"𐀀𐀀" + marker + unsupported1 +
+		"杂志等中区别" + marker + "A" + marker + marker + unsupported1 +
+		marker + unsupported2 + marker + marker + "987"
+	ch <- msg
 
 	ch <- "POISON_PILL"
 	_, err = pgConn.Exec(dbCtx, insertSQL, len("POISON_PILL"), MD5("POISON_PILL"), "POISON_PILL")

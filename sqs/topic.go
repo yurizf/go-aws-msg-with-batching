@@ -60,7 +60,6 @@ func NewBatchedTopic(queueURL string) (msg.Topic, string, func(ctx context.Conte
 	if err == nil {
 		tt, _ := t.(*Topic)
 		if tt.batchTopic, err = batching.NewTopic(queueURL, tt.Svc, batching.BATCH_TIMEOUT); err == nil {
-			tt.batchTopic.UUENCODE = false
 			return t, tt.batchTopic.ID, tt.batchTopic.ShutDown, err
 		}
 	}
