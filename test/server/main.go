@@ -13,6 +13,7 @@ import (
 	"log"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 )
@@ -68,12 +69,27 @@ func main() {
 	receiverFunc := msg.ReceiverFunc(
 
 		func(ctx context.Context, m *msg.Message) error {
+			unsupported1 := string(rune(5)) + string(rune(6)) + string(rune(7))
+			unsupported2 := string(rune(2)) + string(rune(1)) + string(rune(3))
+			marker := string(rune(1114111))
+			hairy_msg := "hairy_msg: " + unsupported2 +
+				"𐀀𐀀" + marker + unsupported1 +
+				"杂志等中区别" + marker + "A" + marker + marker + unsupported1 +
+				marker + unsupported2 + marker + marker + "987"
+
 			data, _ := io.ReadAll(m.Body)
 			str := string(data)
 			log.Printf("[TRACE] receiver obtained msg of %d bytes: %s", len(str), substr(str))
 			_, err := pgConn.Exec(dbCtx, insertSQL, len(str), MD5(str), str)
 			if err != nil {
 				log.Printf("[ERROR] writing %d bytes to the database: %s", len(str), err)
+			}
+
+			log.Printf("[INFO] received hairy msg runes %v", []rune(str))
+			if strings.HasPrefix(str, "hairy") && str != hairy_msg {
+				log.Printf("[ERROR] possible decoding issue:")
+				log.Printf("[ERROR] expected runes %v", []rune(hairy_msg))
+
 			}
 
 			if str == "POISON_PILL" {

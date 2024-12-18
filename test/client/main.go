@@ -136,9 +136,9 @@ func main() {
 
 	// msg with unicode chars SQS does not support
 	unsupported1 := string(rune(5)) + string(rune(6)) + string(rune(7))
-	unsupported2 := string(rune(0)) + string(rune(1)) + string(rune(3))
+	unsupported2 := string(rune(2)) + string(rune(1)) + string(rune(3))
 	marker := string(rune(1114111))
-	msg := unsupported2 +
+	msg := "hairy_msg: " + unsupported2 +
 		"𐀀𐀀" + marker + unsupported1 +
 		"杂志等中区别" + marker + "A" + marker + marker + unsupported1 +
 		marker + unsupported2 + marker + marker + "987"
